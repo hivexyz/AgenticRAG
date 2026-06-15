@@ -2,12 +2,19 @@
 应用配置模块
 支持环境变量配置切换（开发/生产环境）
 """
-from pydantic_settings import BaseSettings
 from typing import List
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """应用配置类"""
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
     
     # 环境配置
     ENVIRONMENT: str = "development"  # development, production
@@ -20,6 +27,17 @@ class Settings(BaseSettings):
     # 服务器配置
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+
+    # 多租户配置
+    DEFAULT_TENANT_ID: str = "default"
+
+
+    # 认证配置
+    AUTH_ENABLED: bool = False
+    AUTH_API_KEYS: str = ""  # 形如 key1:tenant_a,key2:tenant_b
+
+    # 向量存储后端配置
+    VECTOR_STORE_BACKEND: str = "milvus"  # milvus, pgvector
     
     # CORS 配置
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080"]
@@ -43,9 +61,14 @@ class Settings(BaseSettings):
     MILVUS_USER: str = ""
     MILVUS_PASSWORD: str = ""
     MILVUS_COLLECTION_NAME: str = "vectors"
-    MILVUS_DIMENSION: int = 768
+    MILVUS_DIMENSION: int = 1536
     MILVUS_INDEX_TYPE: str = "IVF_FLAT"
     MILVUS_METRIC_TYPE: str = "L2"
+
+    # pgvector 配置
+    PGVECTOR_TABLE_NAME: str = "document_vectors"
+    PGVECTOR_DISTANCE_METRIC: str = "cosine"  # cosine, l2, ip
+    PGVECTOR_IVFFLAT_LISTS: int = 100
     
     # OpenAI API 配置
     OPENAI_API_KEY: str = ""
@@ -73,6 +96,28 @@ class Settings(BaseSettings):
     AGENTIC_RAG_MAX_RETRIEVALS: int = 2  # 最大检索次数
     AGENTIC_RAG_QUALITY_THRESHOLD: float = 0.8  # 质量阈值
     AGENTIC_RAG_DEFAULT_TOP_K: int = 10  # 默认检索数量
+
+    @property
+    def vector_dimension(self) -> int:
+        """统一的向量维度配置。
+
+        兼容旧配置：
+        - 新配置显式设置 `OPENAI_EMBEDDING_DIMENSION` 时，优先使用该值；
+        - 旧部署若仅设置 `MILVUS_DIMENSION`，则继续沿用该值，避免升级后维度回归。
+        """
+        if "OPENAI_EMBEDDING_DIMENSION" in self.model_fields_set:
+            return self.OPENAI_EMBEDDING_DIMENSION
+        return self.MILVUS_DIMENSION
+
+    @property
+    def vector_store_backend(self) -> str:
+        """当前启用的向量存储后端。"""
+        return self.VECTOR_STORE_BACKEND.strip().lower()
+
+    @property
+    def vector_dimensions_aligned(self) -> bool:
+        """Milvus 与 Embedding 配置的维度是否一致。"""
+        return self.MILVUS_DIMENSION == self.OPENAI_EMBEDDING_DIMENSION
     
     @property
     def postgres_url(self) -> str:
@@ -94,11 +139,5 @@ class Settings(BaseSettings):
         """判断是否为生产环境"""
         return self.ENVIRONMENT.lower() == "production"
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        env_file_encoding = "utf-8"
-
-
 # 创建全局配置实例
 settings = Settings()

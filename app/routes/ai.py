@@ -1,12 +1,15 @@
-"""
-LLM 和 Embedding 相关 API 路由
-"""
+"""LLM 和 Embedding 相关 API 路由。"""
+
+from typing import Any, Dict, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from app.models import llm_manager, embedding_manager, reranker_manager
-from app.database.milvus import milvus_manager
+
+from app.database.vector_store import vector_store
+from app.models import embedding_manager, llm_manager, reranker_manager
 from app.utils.logger import logger
+from app.auth import get_tenant_id
+from app.utils.tenancy import require_tenant_id
 
 router = APIRouter()
 
@@ -213,21 +216,19 @@ async def rerank_with_embeddings(request: RerankWithEmbeddingsRequest):
 
 
 @router.post("/search")
-async def search_with_rerank(request: SearchWithRerankRequest):
+async def search_with_rerank(request: SearchWithRerankRequest, tenant_id: str = Depends(get_tenant_id)):
     """
     搜索并重排序（集成 Embedding + Milvus + Reranker）
     """
     try:
-        if not milvus_manager.connected:
-            raise HTTPException(status_code=503, detail="Milvus 服务未连接")
-        
         query_embedding = await embedding_manager.create_embedding(request.query)
-        
-        search_results = milvus_manager.search_vectors(
+
+        search_results = await vector_store.search_vectors(
             query_vectors=[query_embedding],
             top_k=request.top_k,
+            tenant_id=tenant_id,
         )
-        
+
         if not search_results or not search_results[0]:
             return {
                 "query": request.query,
@@ -252,6 +253,10 @@ async def search_with_rerank(request: SearchWithRerankRequest):
             "query": request.query,
             "results": reranked_results,
         }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
