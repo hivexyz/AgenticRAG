@@ -3,6 +3,9 @@ Gradio 主界面
 """
 import gradio as gr
 from typing import List, Dict, Any, Tuple
+
+from app.utils.tenancy import normalize_tenant_id
+
 from .api_client import api_client
 from .config import (
     APP_TITLE,
@@ -17,11 +20,13 @@ class AgenticRAGInterface:
     
     def __init__(self):
         self.conversation_history: List[Dict[str, str]] = []
+        self.current_tenant_id: str = "default"
     
     def query(
         self,
         message: str,
         history: List[Dict[str, str]],
+        tenant_id: str,
         max_retrievals: int,
         show_details: bool,
     ) -> Tuple[List[Dict[str, str]], str, str, str, str]:
@@ -39,12 +44,19 @@ class AgenticRAGInterface:
         """
         if not message.strip():
             return history, "", "", "", ""
-        
+
+        normalized_tenant_id = normalize_tenant_id(tenant_id)
+        if normalized_tenant_id != self.current_tenant_id:
+            self.conversation_history = []
+            history = []
+            self.current_tenant_id = normalized_tenant_id
+
         # 调用 API
         result = api_client.agentic_rag_query(
             query=message,
             conversation_history=self.conversation_history,
             max_retrievals=max_retrievals,
+            tenant_id=normalized_tenant_id,
         )
         
         # 检查错误
@@ -94,6 +106,7 @@ class AgenticRAGInterface:
     def clear_history(self) -> Tuple[List[Dict[str, str]], str, str, str, str]:
         """清除对话历史"""
         self.conversation_history = []
+        self.current_tenant_id = "default"
         return [], "", "", "", ""
     
     def analyze_query(self, query: str) -> str:
@@ -128,7 +141,7 @@ class AgenticRAGInterface:
 class DocumentManagerInterface:
     """文档管理界面"""
     
-    def list_documents(self, skip: int = 0, limit: int = 10) -> str:
+    def list_documents(self, tenant_id: str, skip: int = 0, limit: int = 10) -> str:
         """
         获取文档列表
         
@@ -139,12 +152,15 @@ class DocumentManagerInterface:
         Returns:
             文档列表字符串
         """
-        result = api_client.list_documents(skip=skip, limit=limit)
-        
-        if result.get("error"):
+        result = api_client.list_documents(skip=skip, limit=limit, tenant_id=tenant_id or "default")
+
+        if isinstance(result, dict) and result.get("error"):
             return f"获取文档列表失败: {result['error']}"
-        
-        documents = result.get("documents", [])
+
+        if isinstance(result, list):
+            documents = result
+        else:
+            documents = result.get("documents", []) if isinstance(result, dict) else []
         
         if not documents:
             return "暂无文档"
@@ -162,6 +178,7 @@ class DocumentManagerInterface:
     
     def upload_document(
         self,
+        tenant_id: str,
         title: str,
         content: str,
         metadata: str,
@@ -193,6 +210,7 @@ class DocumentManagerInterface:
             title=title,
             content=content,
             metadata=metadata_dict,
+            tenant_id=tenant_id or "default",
         )
         
         if result.get("error"):
@@ -202,9 +220,11 @@ class DocumentManagerInterface:
     
     def upload_document_file(
         self,
+        tenant_id: str,
         file,
         title: str,
         author: str,
+        metadata: str,
         split_method: str,
         chunk_size: int,
         chunk_overlap: int,
@@ -217,6 +237,7 @@ class DocumentManagerInterface:
             file: 上传的文件（Gradio 返回的文件路径）
             title: 文档标题
             author: 作者
+            metadata: 元数据（JSON 格式，可选）
             split_method: 切分方法
             chunk_size: 块大小
             chunk_overlap: 块重叠大小
@@ -230,16 +251,28 @@ class DocumentManagerInterface:
         
         # Gradio 返回的是文件路径字符串
         file_path = file if isinstance(file, str) else str(file)
+
+        metadata_dict = None
+        if metadata:
+            try:
+                import json
+                metadata_dict = json.loads(metadata)
+            except json.JSONDecodeError:
+                return "元数据格式错误，请使用有效的 JSON 格式"
+            if not isinstance(metadata_dict, dict):
+                return "元数据必须是 JSON 对象"
         
         try:
             result = api_client.upload_document_file(
                 file_path=file_path,
                 title=title if title else None,
                 author=author if author else None,
+                metadata=metadata_dict,
                 split_method=split_method,
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
                 store_vectors=store_vectors,
+                tenant_id=tenant_id or "default",
             )
             
             if result.get("error"):
@@ -249,7 +282,7 @@ class DocumentManagerInterface:
         except Exception as e:
             return f"上传失败: {str(e)}"
     
-    def delete_document(self, document_id: str) -> str:
+    def delete_document(self, tenant_id: str, document_id: str) -> str:
         """
         删除文档
         
@@ -267,7 +300,7 @@ class DocumentManagerInterface:
         except ValueError:
             return "文档 ID 必须是整数"
         
-        result = api_client.delete_document(doc_id)
+        result = api_client.delete_document(doc_id, tenant_id=tenant_id or "default")
         
         if result.get("error"):
             return f"删除失败: {result['error']}"
@@ -341,6 +374,11 @@ def create_interface():
                             label="对话历史",
                             height=500,
                         )
+                        tenant_id_input = gr.Textbox(
+                            label="租户 ID",
+                            value="default",
+                            placeholder="例如: acme",
+                        )
                         with gr.Row():
                             msg_input = gr.Textbox(
                                 label="输入问题",
@@ -391,13 +429,13 @@ def create_interface():
                 # 事件绑定
                 submit_btn.click(
                     fn=agentic_interface.query,
-                    inputs=[msg_input, chatbot, max_retrievals, show_details],
+                    inputs=[msg_input, chatbot, tenant_id_input, max_retrievals, show_details],
                     outputs=[chatbot, answer_output, quality_score, query_analysis, search_results],
                 )
                 
                 msg_input.submit(
                     fn=agentic_interface.query,
-                    inputs=[msg_input, chatbot, max_retrievals, show_details],
+                    inputs=[msg_input, chatbot, tenant_id_input, max_retrievals, show_details],
                     outputs=[chatbot, answer_output, quality_score, query_analysis, search_results],
                 )
                 
@@ -435,6 +473,7 @@ def create_interface():
                 with gr.Row():
                     with gr.Column():
                         gr.Markdown("### 上传文件")
+                        file_tenant_id = gr.Textbox(label="租户 ID", value="default")
                         file_upload = gr.File(
                             label="选择文件",
                             file_types=[".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".txt", ".md"],
@@ -442,12 +481,17 @@ def create_interface():
                         )
                         file_title = gr.Textbox(label="文档标题（可选）")
                         file_author = gr.Textbox(label="作者（可选）")
+                        file_metadata = gr.Textbox(
+                            label="文件元数据（JSON 格式，可选）",
+                            placeholder='{"source": "manual-upload"}',
+                            lines=2,
+                        )
                         
                         with gr.Row():
                             split_method = gr.Dropdown(
                                 choices=["recursive", "character", "token", "semantic", "paragraph", "sentence"],
                                 value="recursive",
-                                label="切分方法",
+                                label="切分方法（semantic 为轻量语义切分）",
                             )
                             chunk_size = gr.Slider(
                                 minimum=100,
@@ -478,6 +522,7 @@ def create_interface():
                     
                     with gr.Column():
                         gr.Markdown("### 上传纯文本")
+                        doc_tenant_id = gr.Textbox(label="租户 ID", value="default")
                         doc_title = gr.Textbox(label="文档标题")
                         doc_content = gr.Textbox(
                             label="文档内容",
@@ -499,6 +544,7 @@ def create_interface():
                 with gr.Row():
                     with gr.Column():
                         gr.Markdown("### 文档列表")
+                        list_tenant_id = gr.Textbox(label="租户 ID", value="default")
                         list_btn = gr.Button("刷新文档列表", variant="secondary")
                         doc_list_output = gr.Textbox(
                             label="文档列表",
@@ -508,6 +554,7 @@ def create_interface():
                     
                     with gr.Column():
                         gr.Markdown("### 删除文档")
+                        delete_tenant_id = gr.Textbox(label="租户 ID", value="default")
                         doc_id_input = gr.Textbox(label="文档 ID")
                         delete_btn = gr.Button("删除文档", variant="stop")
                         delete_output = gr.Textbox(
@@ -519,24 +566,25 @@ def create_interface():
                 # 事件绑定
                 upload_file_btn.click(
                     fn=doc_interface.upload_document_file,
-                    inputs=[file_upload, file_title, file_author, split_method, chunk_size, chunk_overlap, store_vectors],
+                    inputs=[file_tenant_id, file_upload, file_title, file_author, file_metadata, split_method, chunk_size, chunk_overlap, store_vectors],
                     outputs=[upload_file_output],
                 )
                 
                 upload_btn.click(
                     fn=doc_interface.upload_document,
-                    inputs=[doc_title, doc_content, doc_metadata],
+                    inputs=[doc_tenant_id, doc_title, doc_content, doc_metadata],
                     outputs=[upload_output],
                 )
                 
                 list_btn.click(
                     fn=doc_interface.list_documents,
+                    inputs=[list_tenant_id],
                     outputs=[doc_list_output],
                 )
                 
                 delete_btn.click(
                     fn=doc_interface.delete_document,
-                    inputs=[doc_id_input],
+                    inputs=[delete_tenant_id, doc_id_input],
                     outputs=[delete_output],
                 )
             

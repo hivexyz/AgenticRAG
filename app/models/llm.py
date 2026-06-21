@@ -33,6 +33,10 @@ class LLMManager:
             base_url=self.base_url if self.base_url else None,
         )
         logger.info(f"LLM 客户端初始化成功，模型: {self.model}")
+
+    def disconnect(self):
+        """关闭客户端引用。"""
+        self.client = None
     
     async def chat_completion(
         self,

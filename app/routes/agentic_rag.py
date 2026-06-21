@@ -1,12 +1,15 @@
-"""
-AgenticRAG API 路由
-提供基于 LangGraph 的智能体驱动的 RAG 查询接口
-"""
-from fastapi import APIRouter, HTTPException
-from typing import List, Dict, Any, Optional
+"""AgenticRAG API 路由。"""
+
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
 from app.agents import agentic_rag_manager
 from app.utils.logger import logger
+from app.auth import get_tenant_id
+from app.utils.messages import langchain_messages_to_dicts
+from app.utils.tenancy import require_tenant_id
 
 router = APIRouter()
 
@@ -29,12 +32,22 @@ class AgenticRAGResponse(BaseModel):
     reranked_results: Optional[List[Dict[str, Any]]]
     retrieval_count: int
     context: Optional[str]
+    citations: Optional[List[Dict[str, Any]]] = None
+    evidence_cards: Optional[List[Dict[str, Any]]] = None
+    answer_blocks: Optional[List[Dict[str, Any]]] = None
+    uncertainty: Optional[Dict[str, Any]] = None
+    refusal: Optional[Dict[str, Any]] = None
     messages: List[Dict[str, str]]
     error: Optional[str]
 
 
+class AnalyzeQueryRequest(BaseModel):
+    """查询分析请求模型"""
+    query: str = Field(..., description="待分析的查询")
+
+
 @router.post("/agentic-rag/query", response_model=AgenticRAGResponse)
-async def agentic_rag_query(request: AgenticRAGRequest):
+async def agentic_rag_query(request: AgenticRAGRequest, tenant_id: str = Depends(get_tenant_id)):
     """
     执行 AgenticRAG 查询
     
@@ -53,6 +66,7 @@ async def agentic_rag_query(request: AgenticRAGRequest):
         
         result = await agentic_rag_manager.query(
             user_query=request.query,
+            tenant_id=tenant_id,
             conversation_history=request.conversation_history,
             config=config,
         )
@@ -66,13 +80,15 @@ async def agentic_rag_query(request: AgenticRAGRequest):
         
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"AgenticRAG 查询失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/agentic-rag/stream")
-async def agentic_rag_stream(request: AgenticRAGRequest):
+async def agentic_rag_stream(request: AgenticRAGRequest, tenant_id: str = Depends(get_tenant_id)):
     """
     流式执行 AgenticRAG 查询
     
@@ -87,7 +103,7 @@ async def agentic_rag_stream(request: AgenticRAGRequest):
     try:
         from fastapi.responses import StreamingResponse
         import json
-        
+
         config = {
             "max_retrievals": request.max_retrievals,
         }
@@ -96,6 +112,7 @@ async def agentic_rag_stream(request: AgenticRAGRequest):
             try:
                 async for event in agentic_rag_manager.stream_query(
                     user_query=request.query,
+                    tenant_id=tenant_id,
                     conversation_history=request.conversation_history,
                     config=config,
                 ):
@@ -108,7 +125,10 @@ async def agentic_rag_stream(request: AgenticRAGRequest):
             event_generator(),
             media_type="text/event-stream",
         )
-        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         logger.error(f"AgenticRAG 流式查询失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -135,7 +155,7 @@ async def agentic_rag_health():
 
 
 @router.post("/agentic-rag/analyze")
-async def analyze_query(query: str):
+async def analyze_query(request: AnalyzeQueryRequest):
     """
     仅分析查询，不执行检索
     
@@ -148,13 +168,12 @@ async def analyze_query(query: str):
     - 是否需要重排序
     """
     try:
-        from app.agents.state import AgenticRAGState
         from langchain_core.messages import HumanMessage, SystemMessage
         from app.models import llm_manager
         
         analysis_prompt = f"""分析以下用户查询，提供检索策略建议：
 
-    查询: {query}
+    查询: {request.query}
 
     请以 JSON 格式返回分析结果，包含以下字段：
     - query_type: 查询类型（factual, conceptual, comparison, how_to, other）
@@ -173,7 +192,7 @@ async def analyze_query(query: str):
         ]
         
         response = await llm_manager.chat_completion(
-            messages=[{"role": msg.type, "content": msg.content} for msg in messages],
+            messages=langchain_messages_to_dicts(messages),
             temperature=0.3,
             max_tokens=500,
         )
@@ -196,7 +215,7 @@ async def analyze_query(query: str):
             }
         
         return {
-            "query": query,
+            "query": request.query,
             "analysis": analysis,
         }
         

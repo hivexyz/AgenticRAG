@@ -66,6 +66,7 @@ class APIClient:
         query: str,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         max_retrievals: int = 2,
+        tenant_id: str = "default",
     ) -> Dict[str, Any]:
         """
         执行 AgenticRAG 查询
@@ -81,6 +82,7 @@ class APIClient:
         data = {
             "query": query,
             "max_retrievals": max_retrievals,
+            "tenant_id": tenant_id,
         }
         
         if conversation_history:
@@ -147,6 +149,11 @@ class APIClient:
         title: str,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
+        tenant_id: str = "default",
+        store_vectors: bool = False,
+        split_method: str = "recursive",
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
     ) -> Dict[str, Any]:
         """
         上传文档（纯文本）
@@ -160,8 +167,13 @@ class APIClient:
             上传结果
         """
         data = {
+            "tenant_id": tenant_id,
             "title": title,
             "content": content,
+            "store_vectors": store_vectors,
+            "split_method": split_method,
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
         }
         
         if metadata:
@@ -174,10 +186,12 @@ class APIClient:
         file_path: str,
         title: Optional[str] = None,
         author: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         split_method: str = "recursive",
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
         store_vectors: bool = True,
+        tenant_id: str = "default",
     ) -> Dict[str, Any]:
         """
         上传文档文件
@@ -186,6 +200,7 @@ class APIClient:
             file_path: 文件路径
             title: 文档标题（可选，默认使用文件名）
             author: 作者
+            metadata: 文档元数据（JSON 对象）
             split_method: 切分方法 (recursive, character, token, semantic, paragraph, sentence)
             chunk_size: 块大小
             chunk_overlap: 块重叠大小
@@ -200,6 +215,7 @@ class APIClient:
             with open(file_path, 'rb') as f:
                 files = {'file': f}
                 data = {
+                    'tenant_id': tenant_id,
                     'split_method': split_method,
                     'chunk_size': chunk_size,
                     'chunk_overlap': chunk_overlap,
@@ -210,6 +226,8 @@ class APIClient:
                     data['title'] = title
                 if author:
                     data['author'] = author
+                if metadata is not None:
+                    data['metadata'] = json.dumps(metadata, ensure_ascii=False)
                 
                 response = self.session.post(url, files=files, data=data)
                 response.raise_for_status()
@@ -229,6 +247,7 @@ class APIClient:
         self,
         skip: int = 0,
         limit: int = 10,
+        tenant_id: str = "default",
     ) -> Dict[str, Any]:
         """
         获取文档列表
@@ -240,10 +259,10 @@ class APIClient:
         Returns:
             文档列表
         """
-        params = {"skip": skip, "limit": limit}
+        params = {"skip": skip, "limit": limit, "tenant_id": tenant_id}
         return self._request("GET", "/documents", params=params)
     
-    def get_document(self, document_id: int) -> Dict[str, Any]:
+    def get_document(self, document_id: int, tenant_id: str = "default") -> Dict[str, Any]:
         """
         获取文档详情
         
@@ -253,9 +272,9 @@ class APIClient:
         Returns:
             文档详情
         """
-        return self._request("GET", f"/documents/{document_id}")
+        return self._request("GET", f"/documents/{document_id}", params={"tenant_id": tenant_id})
     
-    def delete_document(self, document_id: int) -> Dict[str, Any]:
+    def delete_document(self, document_id: int, tenant_id: str = "default") -> Dict[str, Any]:
         """
         删除文档
         
@@ -265,7 +284,7 @@ class APIClient:
         Returns:
             删除结果
         """
-        return self._request("DELETE", f"/documents/{document_id}")
+        return self._request("DELETE", f"/documents/{document_id}", params={"tenant_id": tenant_id})
 
 
 # 创建全局 API 客户端实例

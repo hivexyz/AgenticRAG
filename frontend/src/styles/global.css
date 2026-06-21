@@ -1,0 +1,21 @@
+html, body, #root {
+  margin: 0;
+  min-height: 100%;
+  background: #f5f7fa;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.page-card + .page-card {
+  margin-top: 16px;
+}
+
+.chat-answer-block {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  margin-bottom: 8px;
+}

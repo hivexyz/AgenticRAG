@@ -8,6 +8,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from app.config import settings
 from app.utils.logger import logger
+from app.utils.messages import langchain_messages_to_dicts
 from .state import AgenticRAGState
 from .nodes import (
     query_analyzer,
@@ -73,6 +74,7 @@ class AgenticRAGManager:
     async def query(
         self,
         user_query: str,
+        tenant_id: str = "default",
         conversation_history: Optional[List[Dict[str, str]]] = None,
         config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -107,17 +109,34 @@ class AgenticRAGManager:
         
         initial_state: AgenticRAGState = {
             "messages": messages,
+            "tenant_id": tenant_id,
             "user_query": user_query,
+            "current_query": user_query,
             "query_analysis": None,
+            "query_plan": None,
+            "query_rewrites": [],
+            "retrieval_attempts": [],
+            "retrieval_feedback": None,
             "search_results": None,
             "reranked_results": None,
             "context": None,
+            "context_status": None,
+            "citations": [],
+            "evidence_cards": [],
+            "answer_blocks": [],
+            "uncertainty": None,
+            "refusal": None,
             "answer": None,
             "quality_score": None,
+            "quality_evaluation": None,
+            "missing_information": [],
             "retrieval_count": 0,
             "max_retrievals": config.get("max_retrievals", self.max_retrievals) if config else self.max_retrievals,
             "should_continue": True,
+            "next_action": None,
             "error": None,
+            "retrieval_error": None,
+            "answer_error": None,
         }
         
         # 确保 config 包含 thread_id（使用 checkpointer 时必需）
@@ -143,7 +162,13 @@ class AgenticRAGManager:
                 "reranked_results": result.get("reranked_results"),
                 "retrieval_count": result.get("retrieval_count"),
                 "context": result.get("context"),
-                "messages": [{"role": msg.type, "content": msg.content} for msg in result.get("messages", [])],
+                "context_status": result.get("context_status"),
+                "citations": result.get("citations"),
+                "evidence_cards": result.get("evidence_cards"),
+                "answer_blocks": result.get("answer_blocks"),
+                "uncertainty": result.get("uncertainty"),
+                "refusal": result.get("refusal"),
+                "messages": langchain_messages_to_dicts(result.get("messages", [])),
                 "error": result.get("error"),
             }
             
@@ -158,6 +183,12 @@ class AgenticRAGManager:
                 "reranked_results": None,
                 "retrieval_count": 0,
                 "context": None,
+                "context_status": None,
+                "citations": [],
+                "evidence_cards": [],
+                "answer_blocks": [],
+                "uncertainty": None,
+                "refusal": None,
                 "messages": [],
                 "error": str(e),
             }
@@ -165,6 +196,7 @@ class AgenticRAGManager:
     async def stream_query(
         self,
         user_query: str,
+        tenant_id: str = "default",
         conversation_history: Optional[List[Dict[str, str]]] = None,
         config: Optional[Dict[str, Any]] = None,
     ):
@@ -199,17 +231,34 @@ class AgenticRAGManager:
         
         initial_state: AgenticRAGState = {
             "messages": messages,
+            "tenant_id": tenant_id,
             "user_query": user_query,
+            "current_query": user_query,
             "query_analysis": None,
+            "query_plan": None,
+            "query_rewrites": [],
+            "retrieval_attempts": [],
+            "retrieval_feedback": None,
             "search_results": None,
             "reranked_results": None,
             "context": None,
+            "context_status": None,
+            "citations": [],
+            "evidence_cards": [],
+            "answer_blocks": [],
+            "uncertainty": None,
+            "refusal": None,
             "answer": None,
             "quality_score": None,
+            "quality_evaluation": None,
+            "missing_information": [],
             "retrieval_count": 0,
             "max_retrievals": config.get("max_retrievals", self.max_retrievals) if config else self.max_retrievals,
             "should_continue": True,
+            "next_action": None,
             "error": None,
+            "retrieval_error": None,
+            "answer_error": None,
         }
         
         # 确保 config 包含 thread_id（使用 checkpointer 时必需）
