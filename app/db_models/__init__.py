@@ -5,5 +5,16 @@
 from .conversation import ConversationMessage, ConversationSession
 from .document import Document, DocumentChunk
 from .feedback import AnswerFeedback
+from .wiki import WikiCompileJob, WikiPage, WikiPageLink, WikiPageRevision
 
-__all__ = ["Document", "DocumentChunk", "ConversationSession", "ConversationMessage", "AnswerFeedback"]
+__all__ = [
+    "Document",
+    "DocumentChunk",
+    "ConversationSession",
+    "ConversationMessage",
+    "AnswerFeedback",
+    "WikiPage",
+    "WikiPageRevision",
+    "WikiCompileJob",
+    "WikiPageLink",
+]

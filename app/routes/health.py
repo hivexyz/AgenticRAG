@@ -4,10 +4,12 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.config import settings
-from app.observability import metrics_registry
+from app.observability import metrics_registry, render_prometheus_metrics
+from app.services.cache import cache_registry
+from app.services.tenant_limits import tenant_limits
 
 router = APIRouter()
 
@@ -46,7 +48,22 @@ async def readiness_check(request: Request):
 
 @router.get("/metrics")
 async def metrics():
-    return metrics_registry.snapshot()
+    payload = metrics_registry.snapshot()
+    payload["cache"] = cache_registry.snapshot()
+    return payload
+
+
+@router.get("/metrics/prometheus", response_class=PlainTextResponse)
+async def prometheus_metrics():
+    return PlainTextResponse(
+        render_prometheus_metrics(
+            metrics=metrics_registry.snapshot(),
+            tenant_token_usage=tenant_limits.snapshot(),
+            cache_stats=cache_registry.snapshot(),
+            token_cost_per_1k=settings.MODEL_COST_PER_1K_TOKENS_USD,
+        ),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @router.get("/ping")

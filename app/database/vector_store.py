@@ -13,6 +13,7 @@ from app.config import settings
 from app.database.postgres import engine
 from app.database.milvus import MilvusManager, milvus_manager
 from app.utils.logger import logger
+from app.utils.retrieval_filters import build_pgvector_filter_sql
 from app.utils.tenancy import validate_tenant_id
 
 try:
@@ -368,14 +369,17 @@ class PGVectorStore(VectorStore):
                     f"SELECT id, metadata, {distance_sql} AS distance "
                     f"FROM {settings.PGVECTOR_TABLE_NAME} "
                     f"WHERE tenant_id = :tenant_id "
+                    f"{self._metadata_filter_where(params)} "
                     f"ORDER BY distance ASC LIMIT :top_k"
                 )
+                filter_params = self._metadata_filter_params(params)
                 query = await session.execute(
                     sql,
                     {
                         "tenant_id": normalized_tenant_id,
                         "query_vector": self._vector_literal(vector),
                         "top_k": top_k,
+                        **filter_params,
                     },
                 )
                 hits = []
@@ -391,6 +395,18 @@ class PGVectorStore(VectorStore):
                 results.append(hits)
 
         return results
+
+    def _metadata_filter_where(self, params: Optional[Dict[str, Any]]) -> str:
+        filters = (params or {}).get("metadata_filters") if isinstance(params, dict) else None
+        clauses, _ = build_pgvector_filter_sql(filters if isinstance(filters, dict) else None)
+        if not clauses:
+            return ""
+        return "AND " + " AND ".join(f"({clause})" for clause in clauses)
+
+    def _metadata_filter_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        filters = (params or {}).get("metadata_filters") if isinstance(params, dict) else None
+        _, filter_params = build_pgvector_filter_sql(filters if isinstance(filters, dict) else None)
+        return filter_params
 
     def delete_vectors_by_document_id(self, document_id: int, tenant_id: Optional[str] = None) -> int:
         raise RuntimeError(

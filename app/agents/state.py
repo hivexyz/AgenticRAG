@@ -13,9 +13,12 @@ class AgenticRAGState(TypedDict):
     tenant_id: str
     user_query: str
     current_query: str
+    standalone_query: Optional[str]
+    conversation_context: Optional[str]
     query_analysis: Optional[Dict[str, Any]]
     query_plan: Optional[Dict[str, Any]]
     query_rewrites: List[str]
+    multi_hop_trace: Optional[List[Dict[str, Any]]]
     retrieval_attempts: List[Dict[str, Any]]
     retrieval_feedback: Optional[str]
     search_results: Optional[List[Dict[str, Any]]]
@@ -30,11 +33,10 @@ class AgenticRAGState(TypedDict):
     answer: Optional[str]
     quality_score: Optional[float]
     quality_evaluation: Optional[Dict[str, Any]]
-    missing_information: List[str]
+    quality_evaluation_status: Optional[str]
     retrieval_count: int
     max_retrievals: int
     should_continue: bool
-    next_action: Optional[str]
     error: Optional[str]
     retrieval_error: Optional[str]
     answer_error: Optional[str]

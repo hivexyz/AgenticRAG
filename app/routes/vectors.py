@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.auth import get_tenant_id
+from app.auth import get_tenant_id, require_write_access
 from app.database.vector_store import vector_store
 from app.utils.logger import logger
 
@@ -52,6 +52,7 @@ async def insert_vectors(
     vectors: List[List[float]],
     metadata: Optional[List[dict]] = None,
     tenant_id: str = Depends(get_tenant_id),
+    _auth=Depends(require_write_access),
 ):
     """插入向量数据"""
     try:
@@ -75,6 +76,7 @@ async def create_vector_collection(
     collection_name: Optional[str] = None,
     dimension: Optional[int] = None,
     tenant_id: str = Depends(get_tenant_id),
+    _auth=Depends(require_write_access),
 ):
     """创建向量集合"""
     try:

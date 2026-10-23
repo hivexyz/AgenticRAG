@@ -1,4 +1,4 @@
-import { DeleteOutlined, EyeOutlined, ReloadOutlined, UnorderedListOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EyeOutlined, FileSyncOutlined, ReloadOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { Button, Drawer, List, Space, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useMemo, useState } from 'react';
@@ -14,12 +14,13 @@ interface Props {
   documents: DocumentItem[];
   loading: boolean;
   onReindex: (item: DocumentItem) => Promise<void> | void;
+  onCompileWiki: (item: DocumentItem) => Promise<void> | void;
   onBulkDelete: (ids: number[]) => Promise<void> | void;
   onOpenDocumentDetail: (item: DocumentItem) => Promise<DetailPayload>;
   onOpenChunkFragment: (documentId: number, chunkId: number) => Promise<DocumentFragment>;
 }
 
-export function DocumentTable({ documents, loading, onReindex, onBulkDelete, onOpenDocumentDetail, onOpenChunkFragment }: Props) {
+export function DocumentTable({ documents, loading, onReindex, onCompileWiki, onBulkDelete, onOpenDocumentDetail, onOpenChunkFragment }: Props) {
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [detailOpen, setDetailOpen] = useState(false);
   const [activeDocument, setActiveDocument] = useState<DocumentItem | null>(null);
@@ -31,6 +32,7 @@ export function DocumentTable({ documents, loading, onReindex, onBulkDelete, onO
     { title: '知识库', dataIndex: 'knowledge_base', key: 'knowledge_base', width: 120, render: (value) => value || '-' },
     { title: '类型', dataIndex: 'file_type', key: 'file_type', width: 100, render: (value) => value || '-' },
     { title: '状态', dataIndex: 'status_display', key: 'status_display', width: 120, render: (value) => <Tag color={value === '入库成功' ? 'green' : value === '入库失败' ? 'red' : 'blue'}>{value || '-'}</Tag> },
+    { title: '内容 Hash', dataIndex: 'content_hash', key: 'content_hash', width: 130, render: (value) => value ? <Typography.Text code>{String(value).slice(0, 10)}</Typography.Text> : '-' },
     { title: '块数', dataIndex: 'chunk_count', key: 'chunk_count', width: 90 },
     { title: '上传人', dataIndex: 'uploaded_by', key: 'uploaded_by', width: 120, render: (value) => value || '-' },
     { title: '更新时间', dataIndex: 'updated_at', key: 'updated_at', width: 180, render: (value) => value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '-' },
@@ -47,10 +49,11 @@ export function DocumentTable({ documents, loading, onReindex, onBulkDelete, onO
             setDetailOpen(true);
           }}>文档详情</Button>
           <Button size="small" icon={<ReloadOutlined />} onClick={() => onReindex(record)}>重新向量化</Button>
+          <Button size="small" icon={<FileSyncOutlined />} onClick={() => onCompileWiki(record)}>生成 Wiki</Button>
         </Space>
       ),
     },
-  ], [onOpenDocumentDetail, onReindex]);
+  ], [onCompileWiki, onOpenDocumentDetail, onReindex]);
 
   return (
     <>
@@ -69,6 +72,7 @@ export function DocumentTable({ documents, loading, onReindex, onBulkDelete, onO
           expandedRowRender: (record) => (
             <Space direction="vertical" size="small">
               <Typography.Text>失败原因：{record.failure_reason || '无'}</Typography.Text>
+              <Typography.Text>内容 Hash：{record.content_hash || '无'}</Typography.Text>
               <Typography.Text>可重试动作：{record.retryable_actions?.join(' / ') || '无'}</Typography.Text>
               <Typography.Text>切分设置：{JSON.stringify(record.advanced_split_settings || {}, null, 2)}</Typography.Text>
             </Space>

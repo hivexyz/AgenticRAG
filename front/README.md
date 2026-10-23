@@ -32,7 +32,7 @@ Gradio 界面为 AgenticRAG 系统提供了一个直观的 Web 界面，用户�
 ### 1. 安装依赖
 
 ```bash
-pip install -r requirements.txt
+uv sync --extra dev
 ```
 
 ### 2. 启动后端服务
@@ -231,7 +231,7 @@ GRADIO_SHARE=false
 
 **解决方案**:
 1. 修改 `.env` 文件中的 `GRADIO_SERVER_PORT`
-2. 确认已安装所有依赖: `pip install -r requirements.txt`
+2. 确认已安装所有依赖: `uv sync --extra dev`
 3. 检查是否有其他程序占用了 7860 端口
 
 ## 高级功能

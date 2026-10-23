@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 from fastapi import FastAPI
+from app.auth import validate_auth_startup_policy
 from app.config import settings
 from app.routes import api
 from app.middleware.cors import add_cors_middleware
@@ -15,6 +16,7 @@ from app.database.vector_store import vector_store
 from app.models import llm_manager, embedding_manager, reranker_manager
 from app.agents import agentic_rag_manager
 from app.tasks import task_runner
+from app.services.wiki import recover_wiki_compile_jobs, run_wiki_compile_job
 
 
 APP_STATE: Dict[str, Any] = {
@@ -47,11 +49,20 @@ async def startup_event() -> None:
     logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} 正在启动...")
     logger.info(f"环境: {settings.ENVIRONMENT}")
     logger.info(f"主机: {settings.HOST}:{settings.PORT}")
+    validate_auth_startup_policy()
 
     try:
         await postgres_manager.init_db()
         _set_component_state("postgres", ready=True, error=None)
         logger.info("PostgreSQL 数据库初始化成功")
+        if settings.should_submit_wiki_jobs_inline:
+            recovered = await recover_wiki_compile_jobs(
+                lambda job_id: task_runner.submit(f"wiki-compile:{job_id}", lambda: run_wiki_compile_job(job_id))
+            )
+            if recovered["recovered_count"]:
+                logger.info(f"已恢复 Wiki 编译任务: {recovered}")
+        else:
+            logger.info("Wiki 编译任务由独立 worker 负责恢复与执行")
     except Exception as e:
         _set_component_state("postgres", ready=False, error=str(e))
         logger.error(f"PostgreSQL 数据库初始化失败: {e}")

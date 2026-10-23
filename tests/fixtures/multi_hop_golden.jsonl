@@ -1,0 +1,15 @@
+{"q":"差旅管理办法中引用的住宿标准文件规定了什么？","must_mention":["住宿标准"],"intermediate_entity":"住宿标准文件"}
+{"q":"报销流程里提到的审批制度，适用于哪些人员？","must_mention":["适用人员"],"intermediate_entity":"审批制度"}
+{"q":"员工手册引用的请假制度里，病假需要哪些材料？","must_mention":["病假","材料"],"intermediate_entity":"请假制度"}
+{"q":"采购办法中提到的供应商准入规则，评分标准是什么？","must_mention":["评分标准"],"intermediate_entity":"供应商准入规则"}
+{"q":"信息安全规范引用的数据分级文件，高敏数据如何处理？","must_mention":["高敏数据"],"intermediate_entity":"数据分级文件"}
+{"q":"培训制度中引用的新员工手册，试用期培训如何安排？","must_mention":["试用期培训"],"intermediate_entity":"新员工手册"}
+{"q":"项目管理规范提到的风险评估模板，风险等级怎么划分？","must_mention":["风险等级"],"intermediate_entity":"风险评估模板"}
+{"q":"费用报销制度引用的发票管理办法，电子发票怎么归档？","must_mention":["电子发票"],"intermediate_entity":"发票管理办法"}
+{"q":"外包管理制度提到的准入清单，外包人员入场前需要什么？","must_mention":["入场"],"intermediate_entity":"准入清单"}
+{"q":"绩效办法引用的目标管理制度，目标变更如何审批？","must_mention":["目标变更","审批"],"intermediate_entity":"目标管理制度"}
+{"q":"请总结请假制度的核心要求。","must_mention":["请假"],"intermediate_entity":null}
+{"q":"差旅报销标准是什么？","must_mention":["差旅","报销"],"intermediate_entity":null}
+{"q":"如何上传文档到知识库？","must_mention":["上传"],"intermediate_entity":null}
+{"q":"知识库问答支持哪些来源？","must_mention":["来源"],"intermediate_entity":null}
+{"q":"如何查看 Wiki 页面修订历史？","must_mention":["修订历史"],"intermediate_entity":null}

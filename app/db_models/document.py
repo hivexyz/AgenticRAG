@@ -25,6 +25,7 @@ class Document(Base):
     file_type = Column(String(50), nullable=True, comment="文件类型 (pdf, docx, txt, etc.)")
     file_path = Column(String(500), nullable=True, comment="文件路径")
     file_size = Column(Integer, nullable=True, comment="文件大小（字节）")
+    content_hash = Column(String(64), nullable=True, index=True, comment="源内容 SHA-256")
     chunk_count = Column(Integer, default=0, nullable=True, comment="切分块数量")
     split_method = Column(String(50), nullable=True, comment="切分方法")
     chunk_size = Column(Integer, nullable=True, comment="块大小")
@@ -68,6 +69,7 @@ class Document(Base):
             "file_type": self.file_type,
             "file_path": self.file_path,
             "file_size": self.file_size,
+            "content_hash": self.content_hash,
             "chunk_count": self.chunk_count,
             "split_method": self.split_method,
             "chunk_size": self.chunk_size,
@@ -116,6 +118,12 @@ class DocumentChunk(Base):
         """转换为检索结果格式。"""
         metadata = self.chunk_metadata if isinstance(self.chunk_metadata, dict) else {}
         owner = document or self.document
+        document_metadata = {}
+        if owner is not None and hasattr(owner, "_parse_metadata"):
+            document_metadata = owner._parse_metadata() or {}
+        merged_metadata = {**document_metadata, **metadata}
+        if document_metadata:
+            merged_metadata["document_metadata"] = document_metadata
         return {
             "id": self.id,
             "chunk_id": self.id,
@@ -129,7 +137,8 @@ class DocumentChunk(Base):
             "content": self.content,
             "page_number": self.page_number,
             "section_title": self.section_title,
-            "metadata": metadata,
+            "metadata": merged_metadata,
+            "knowledge_base": merged_metadata.get("knowledge_base"),
         }
 
     def to_fragment_dict(self, document: Optional[Document] = None, *, prev_chunk: Optional["DocumentChunk"] = None, next_chunk: Optional["DocumentChunk"] = None) -> Dict[str, Any]:

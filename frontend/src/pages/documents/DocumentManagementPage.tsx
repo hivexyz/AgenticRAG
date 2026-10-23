@@ -1,14 +1,14 @@
-import { Button, Card, Col, Input, Row, Select, Space, message } from 'antd';
+import { Button, Card, Col, Input, Row, Select, Space, Tag, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
+import { useAuthContext } from '../../app/auth-context';
 import { DocumentTable } from '../../components/documents/DocumentTable';
 import { DocumentUploadPanel } from '../../components/documents/DocumentUploadPanel';
 import { bulkDeleteDocuments, fetchDocumentChunks, fetchDocumentPresets, fetchDocuments, fetchFragment, reindexDocument } from '../../services/documents';
+import { compileWikiPage } from '../../services/wiki';
 import type { DocumentItem, PresetItem } from '../../types';
 
-const DEFAULT_TENANT = 'default';
-
 export function DocumentManagementPage() {
-  const [tenantId, setTenantId] = useState(DEFAULT_TENANT);
+  const { tenantId } = useAuthContext();
   const [keyword, setKeyword] = useState('');
   const [knowledgeBase, setKnowledgeBase] = useState<string | undefined>();
   const [fileType, setFileType] = useState<string | undefined>();
@@ -59,7 +59,7 @@ export function DocumentManagementPage() {
     <Space direction="vertical" style={{ width: '100%' }} size="large">
       <Card className="page-card" title="知识库文档管理">
         <Row gutter={16}>
-          <Col span={6}><Input value={tenantId} onChange={(e) => setTenantId(e.target.value)} placeholder="tenant_id" /></Col>
+          <Col span={4}><Tag color="blue">租户：{tenantId}</Tag></Col>
           <Col span={6}><Input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索文档名" onPressEnter={() => void loadDocuments()} /></Col>
           <Col span={5}><Select allowClear value={knowledgeBase} onChange={setKnowledgeBase} placeholder="知识库筛选" options={knowledgeBaseOptions} style={{ width: '100%' }} /></Col>
           <Col span={5}><Select allowClear value={fileType} onChange={setFileType} placeholder="文件类型筛选" options={fileTypeOptions} style={{ width: '100%' }} /></Col>
@@ -78,9 +78,18 @@ export function DocumentManagementPage() {
             message.success('已触发重新向量化');
             await loadDocuments();
           }}
+          onCompileWiki={async (item) => {
+            const page = await compileWikiPage(tenantId, item.id);
+            message.success(`已生成 Wiki 页面：${page.title}`);
+          }}
           onBulkDelete={async (ids) => {
-            await bulkDeleteDocuments(tenantId, ids);
-            message.success('批量删除请求已受理');
+            const result = await bulkDeleteDocuments(tenantId, ids);
+            if (result.failures.length) {
+              message.warning(`批量删除完成：成功 ${result.deleted.length}，失败 ${result.failures.length}`);
+            } else {
+              message.success(`批量删除完成：成功 ${result.deleted.length}`);
+            }
+            await loadDocuments();
           }}
           onOpenDocumentDetail={async (item) => {
             const chunks = await fetchDocumentChunks(item.id, tenantId);

@@ -19,3 +19,60 @@ body {
   border: 1px solid #f0f0f0;
   margin-bottom: 8px;
 }
+
+.markdown-answer {
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.markdown-answer p {
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+}
+
+.markdown-answer ul,
+.markdown-answer ol {
+  margin: 0 0 8px 20px;
+  padding: 0;
+}
+
+.markdown-answer li {
+  margin-bottom: 4px;
+}
+
+.markdown-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin-bottom: 10px;
+}
+
+.markdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  background: #fff;
+}
+
+.markdown-table th,
+.markdown-table td {
+  border: 1px solid #d9d9d9;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.markdown-table th {
+  background: #f5f7fa;
+  font-weight: 600;
+}
+
+.markdown-code {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  background: #1f2329;
+  color: #f5f7fa;
+  font-size: 13px;
+  line-height: 1.5;
+}

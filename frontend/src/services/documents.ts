@@ -45,6 +45,13 @@ export async function reindexDocument(documentId: number, tenantId: string) {
 }
 
 export async function bulkDeleteDocuments(tenantId: string, documentIds: number[]) {
-  const response = await http.post('/documents/bulk-delete', { tenant_id: tenantId, document_ids: documentIds });
+  const response = await http.post<{
+    tenant_id: string;
+    requested: number[];
+    accepted: number[];
+    deleted: number[];
+    results: Array<{ document_id: number; deleted_vectors: number; deleted_wiki_pages: number[] }>;
+    failures: Array<{ document_id: number; error: string; status_code: number }>;
+  }>('/documents/bulk-delete', { tenant_id: tenantId, document_ids: documentIds });
   return response.data;
 }

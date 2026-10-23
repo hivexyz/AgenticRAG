@@ -16,11 +16,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_auth_context, resolve_tenant_id
+from app.auth import get_auth_context, require_write_access, resolve_tenant_id
+from app.config import settings
 from app.database.postgres import async_session_maker, postgres_manager
 from app.database.vector_store import vector_store
 from app.db_models import Document, DocumentChunk
 from app.models import embedding_manager
+from app.services.wiki import mark_wiki_pages_deleted_for_document, mark_wiki_pages_stale_for_document
 from app.tasks import task_runner
 from app.observability import log_audit_event
 from app.utils.document_parser import DocumentParser
@@ -29,6 +31,7 @@ from app.utils.logger import logger
 from app.utils.text_splitter import TextSplitter
 
 router = APIRouter()
+UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 INGESTION_STATUS_PENDING = "pending"
 INGESTION_STATUS_PROCESSING = "processing"
@@ -92,6 +95,7 @@ class DocumentResponse(BaseModel):
     file_type: Optional[str] = None
     file_path: Optional[str] = None
     file_size: Optional[int] = None
+    content_hash: Optional[str] = None
     chunk_count: Optional[int] = None
     split_method: Optional[str] = None
     chunk_size: Optional[int] = None
@@ -153,6 +157,7 @@ class DocumentListItemResponse(BaseModel):
     file_type: Optional[str] = None
     file_path: Optional[str] = None
     file_size: Optional[int] = None
+    content_hash: Optional[str] = None
     chunk_count: Optional[int] = None
     split_method: Optional[str] = None
     chunk_size: Optional[int] = None
@@ -261,6 +266,64 @@ def _parse_metadata_json(metadata: Optional[str]) -> Optional[Dict[str, Any]]:
     return parsed
 
 
+def _validate_upload_file_name(filename: str) -> str:
+    original_file_name = sanitize_filename(filename)
+    suffix = Path(original_file_name).suffix.lower()
+    if suffix not in DocumentParser.supported_extensions():
+        allowed = ", ".join(sorted(DocumentParser.supported_extensions()))
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {suffix or '无扩展名'}，支持: {allowed}")
+    return original_file_name
+
+
+async def _stream_upload_to_temp_file(file: UploadFile, temp_file_path: str) -> Dict[str, Any]:
+    total_size = 0
+    digest = hashlib.sha256()
+    try:
+        async with aiofiles.open(temp_file_path, "wb") as f:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                digest.update(chunk)
+                if total_size > settings.max_upload_size_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件大小超过限制，最大允许 {settings.MAX_UPLOAD_SIZE_MB} MB",
+                    )
+                await f.write(chunk)
+    except Exception:
+        if os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except OSError:
+                logger.warning(f"删除上传失败临时文件失败: {temp_file_path}")
+        raise
+    return {
+        "size": total_size,
+        "content_hash": digest.hexdigest(),
+    }
+
+
+def _hash_text_content(content: str) -> str:
+    return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
+
+
+async def _find_duplicate_document(session: AsyncSession, *, tenant_id: str, content_hash: str) -> Optional[Document]:
+    result = await session.execute(
+        select(Document).where(
+            Document.tenant_id == tenant_id,
+            Document.content_hash == content_hash,
+            Document.deletion_status != DELETION_STATUS_DELETED,
+        )
+    )
+    candidates = list(result.scalars().all())
+    for candidate in candidates:
+        if candidate.deletion_status != DELETION_STATUS_FAILED:
+            return candidate
+    return candidates[0] if candidates else None
+
+
 def _validate_split_options(split_method: str, chunk_size: int, chunk_overlap: int) -> None:
     allowed_methods = {"recursive", "character", "token", "semantic", "paragraph", "sentence"}
     if split_method not in allowed_methods:
@@ -314,8 +377,12 @@ async def _store_document_vectors(*, tenant_id: str, document: Document, chunks:
         vectors = await embedding_manager.create_embeddings(texts)
 
     chunk_metadata = []
+    document_metadata = document._parse_metadata() or {}
     for i, chunk in enumerate(chunks):
         source_chunk = chunk.get("db_chunk")
+        metadata = {**document_metadata, **(chunk.get("metadata", {}) or {})}
+        if document_metadata:
+            metadata["document_metadata"] = document_metadata
         chunk_metadata.append({
             "tenant_id": tenant_id,
             "document_id": document.id,
@@ -324,7 +391,7 @@ async def _store_document_vectors(*, tenant_id: str, document: Document, chunks:
             "file_type": document.file_type,
             "chunk_index": i,
             "text": chunk["text"],
-            **chunk.get("metadata", {}),
+            **metadata,
         })
     await vector_store.insert_vectors(vectors, chunk_metadata, tenant_id=tenant_id)
 
@@ -358,6 +425,7 @@ async def _ingest_document_with_session(session: AsyncSession, document: Documen
     })
 
     document.content = content
+    document.content_hash = document.content_hash or _hash_text_content(content)
     document.file_type = document.file_type or file_type
     document.chunk_count = len(chunks)
     document.doc_metadata = json.dumps(merged_metadata, ensure_ascii=False)
@@ -381,6 +449,7 @@ async def _ingest_document_with_session(session: AsyncSession, document: Documen
     document.ingestion_error = None
     await session.commit()
     await session.refresh(document)
+    await mark_wiki_pages_stale_for_document(session=session, tenant_id=document.tenant_id, document_id=document.id)
 
 
 async def _background_ingest_document(document_id: int, *, source_type: str, source_payload: Dict[str, Any]) -> None:
@@ -463,25 +532,44 @@ async def upload_document(
     async_ingest: bool = Form(True),
     tenant_id: Optional[str] = Form(None),
     session: AsyncSession = Depends(postgres_manager.get_session),
-    auth=Depends(get_auth_context),
+    auth=Depends(require_write_access),
 ):
+    temp_file_path: Optional[str] = None
+    keep_temp_file = False
     try:
         normalized_tenant_id = resolve_tenant_id(tenant_id, auth)
         split_strategy = _resolve_split_strategy(split_preset, split_method if split_method else None, chunk_size if chunk_size else None, chunk_overlap if chunk_overlap else None)
-        original_file_name = sanitize_filename(file.filename)
-        temp_file_path, _ = build_temp_upload_path(tempfile.gettempdir(), original_file_name)
+        original_file_name = _validate_upload_file_name(file.filename)
         user_metadata = _parse_metadata_json(metadata)
+        temp_file_path, _ = build_temp_upload_path(tempfile.gettempdir(), original_file_name)
+        upload_info = await _stream_upload_to_temp_file(file, temp_file_path)
+        try:
+            DocumentParser.validate_file_signature(temp_file_path, original_file_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"文件内容与扩展名不匹配: {exc}") from exc
+        file_size = upload_info["size"]
+        content_hash = upload_info["content_hash"]
+        duplicate = await _find_duplicate_document(
+            session,
+            tenant_id=normalized_tenant_id,
+            content_hash=content_hash,
+        )
+        if duplicate:
+            log_audit_event(
+                "document.upload.deduplicated",
+                tenant_id=normalized_tenant_id,
+                target_id=str(duplicate.id),
+                extra={"source_file_name": original_file_name},
+            )
+            return DocumentResponse(**_document_to_management_payload(duplicate))
 
-        async with aiofiles.open(temp_file_path, "wb") as f:
-            content = await file.read()
-            await f.write(content)
-
-        file_size = len(content)
         doc_title = title or Path(original_file_name).stem
         merged_metadata = _merge_metadata(user_metadata, {
             "tenant_id": normalized_tenant_id,
             "source_file_name": original_file_name,
             "file_size": file_size,
+            "content_hash": content_hash,
+            "content_hash_source": "file_bytes",
             "temporary_upload": True,
             "knowledge_base": knowledge_base,
             "split_preset": split_strategy["split_preset"],
@@ -495,6 +583,7 @@ async def upload_document(
             file_type=Path(original_file_name).suffix.lstrip('.').lower() or None,
             file_path=None,
             file_size=file_size,
+            content_hash=content_hash,
             chunk_count=0,
             split_method=split_strategy["split_method"],
             chunk_size=split_strategy["chunk_size"],
@@ -513,6 +602,7 @@ async def upload_document(
 
         if async_ingest:
             _schedule_document_ingest(db_document.id, source_type="file", source_payload={"file_path": temp_file_path})
+            keep_temp_file = True
             log_audit_event("document.upload.accepted", tenant_id=normalized_tenant_id, target_id=str(db_document.id), result="accepted")
             return DocumentResponse(**_document_to_management_payload(db_document))
 
@@ -524,18 +614,39 @@ async def upload_document(
     except Exception as e:
         logger.error(f"文档上传失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if temp_file_path and not keep_temp_file and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except OSError:
+                logger.warning(f"删除上传临时文件失败: {temp_file_path}")
 
 
 @router.post("/", response_model=DocumentResponse)
 async def create_document(
     document: DocumentCreate,
     session: AsyncSession = Depends(postgres_manager.get_session),
-    auth=Depends(get_auth_context),
+    auth=Depends(require_write_access),
 ):
     try:
         normalized_tenant_id = resolve_tenant_id(document.tenant_id, auth)
         split_strategy = _resolve_split_strategy(document.split_preset, document.split_method, document.chunk_size, document.chunk_overlap)
-        extra_metadata = {"tenant_id": normalized_tenant_id, "split_preset": split_strategy["split_preset"]}
+        content_hash = _hash_text_content(document.content)
+        duplicate = await _find_duplicate_document(
+            session,
+            tenant_id=normalized_tenant_id,
+            content_hash=content_hash,
+        )
+        if duplicate:
+            log_audit_event(
+                "document.create.deduplicated",
+                tenant_id=normalized_tenant_id,
+                target_id=str(duplicate.id),
+                extra={"title": document.title},
+            )
+            return DocumentResponse(**_document_to_management_payload(duplicate))
+
+        extra_metadata = {"tenant_id": normalized_tenant_id, "split_preset": split_strategy["split_preset"], "content_hash": content_hash, "content_hash_source": "text"}
         if document.knowledge_base is not None:
             extra_metadata["knowledge_base"] = document.knowledge_base
         merged_metadata = _merge_metadata(document.metadata, extra_metadata)
@@ -546,6 +657,7 @@ async def create_document(
             content="" if document.async_ingest else document.content,
             author=document.author,
             file_type="txt",
+            content_hash=content_hash,
             chunk_count=0,
             split_method=split_strategy["split_method"],
             chunk_size=split_strategy["chunk_size"],
@@ -736,6 +848,72 @@ class BulkDeleteRequest(BaseModel):
     document_ids: List[int]
 
 
+async def _get_document_for_tenant(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    document_id: int,
+) -> Optional[Document]:
+    result = await session.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.tenant_id == tenant_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _mark_document_delete_failed(session: AsyncSession, document: Document, error: str) -> None:
+    document.deletion_status = DELETION_STATUS_FAILED
+    document.deletion_error = error
+    await session.commit()
+
+
+async def _delete_document_with_cleanup(
+    session: AsyncSession,
+    *,
+    tenant_id: str,
+    document: Document,
+) -> Dict[str, Any]:
+    if document.deletion_status == DELETION_STATUS_PENDING:
+        raise HTTPException(status_code=409, detail="文档正在删除中，请稍后重试")
+
+    document_id = int(document.id)
+    document.deletion_status = DELETION_STATUS_PENDING
+    document.deletion_error = None
+    await session.commit()
+    await session.refresh(document)
+
+    try:
+        deleted_vectors = await vector_store.delete_vectors_by_document_id(document_id, tenant_id=tenant_id)
+    except Exception as exc:
+        await _mark_document_delete_failed(session, document, str(exc))
+        raise HTTPException(status_code=503, detail="删除文档向量失败，请稍后重试") from exc
+
+    try:
+        deleted_wiki_pages = await mark_wiki_pages_deleted_for_document(
+            session=session,
+            tenant_id=tenant_id,
+            document_id=document_id,
+        )
+    except Exception as exc:
+        await _mark_document_delete_failed(session, document, str(exc))
+        raise HTTPException(status_code=503, detail="删除关联 Wiki 页面失败，请稍后重试") from exc
+
+    try:
+        await session.delete(document)
+        await session.commit()
+    except Exception as exc:
+        await _mark_document_delete_failed(session, document, str(exc))
+        raise HTTPException(status_code=503, detail="删除数据库记录失败，请稍后重试") from exc
+
+    return {
+        "document_id": document_id,
+        "deleted_vectors": deleted_vectors,
+        "deleted_wiki_pages": deleted_wiki_pages,
+    }
+
+
 @router.get("/management/presets")
 async def list_split_presets():
     return {
@@ -754,55 +932,60 @@ async def bulk_delete_documents(
     auth=Depends(get_auth_context),
 ):
     normalized_tenant_id = resolve_tenant_id(request.tenant_id, auth)
-    deleted = []
-    for document_id in request.document_ids:
-        result = await session.execute(select(Document).where(Document.id == document_id, Document.tenant_id == normalized_tenant_id))
-        document = result.scalar_one_or_none()
+    deleted: List[int] = []
+    results: List[Dict[str, Any]] = []
+    failures: List[Dict[str, Any]] = []
+    for document_id in list(dict.fromkeys(request.document_ids)):
+        document = await _get_document_for_tenant(
+            session,
+            tenant_id=normalized_tenant_id,
+            document_id=document_id,
+        )
         if not document:
+            failures.append({"document_id": document_id, "error": "文档不存在", "status_code": 404})
+            continue
+        try:
+            result = await _delete_document_with_cleanup(
+                session,
+                tenant_id=normalized_tenant_id,
+                document=document,
+            )
+        except HTTPException as exc:
+            failures.append({"document_id": document_id, "error": exc.detail, "status_code": exc.status_code})
             continue
         deleted.append(document_id)
+        results.append(result)
+        log_audit_event("document.bulk_delete.completed", tenant_id=normalized_tenant_id, target_id=str(document_id))
     return {
         "tenant_id": normalized_tenant_id,
         "requested": request.document_ids,
+        "deleted": deleted,
         "accepted": deleted,
+        "results": results,
+        "failures": failures,
     }
 
 
 @router.delete("/{document_id}")
-async def delete_document(document_id: int, tenant_id: Optional[str] = Query(None), session: AsyncSession = Depends(postgres_manager.get_session), auth=Depends(get_auth_context)):
+async def delete_document(document_id: int, tenant_id: Optional[str] = Query(None), session: AsyncSession = Depends(postgres_manager.get_session), auth=Depends(require_write_access)):
     try:
         normalized_tenant_id = resolve_tenant_id(tenant_id, auth)
-        result = await session.execute(select(Document).where(Document.id == document_id, Document.tenant_id == normalized_tenant_id))
-        document = result.scalar_one_or_none()
+        document = await _get_document_for_tenant(session, tenant_id=normalized_tenant_id, document_id=document_id)
         if not document:
             raise HTTPException(status_code=404, detail="文档不存在")
-        if document.deletion_status == DELETION_STATUS_PENDING:
-            raise HTTPException(status_code=409, detail="文档正在删除中，请稍后重试")
-
-        document.deletion_status = DELETION_STATUS_PENDING
-        document.deletion_error = None
-        await session.commit()
-        await session.refresh(document)
-
-        try:
-            deleted_vectors = await vector_store.delete_vectors_by_document_id(document_id, tenant_id=normalized_tenant_id)
-        except Exception as e:
-            document.deletion_status = DELETION_STATUS_FAILED
-            document.deletion_error = str(e)
-            await session.commit()
-            raise HTTPException(status_code=503, detail="删除文档向量失败，请稍后重试") from e
-
-        try:
-            await session.delete(document)
-            await session.commit()
-        except Exception as e:
-            document.deletion_status = DELETION_STATUS_FAILED
-            document.deletion_error = str(e)
-            await session.commit()
-            raise HTTPException(status_code=503, detail="删除数据库记录失败，请稍后重试") from e
-
+        result = await _delete_document_with_cleanup(
+            session,
+            tenant_id=normalized_tenant_id,
+            document=document,
+        )
         log_audit_event("document.delete.completed", tenant_id=normalized_tenant_id, target_id=str(document_id))
-        return {"message": "文档删除成功", "tenant_id": normalized_tenant_id, "deleted_document_id": document_id, "deleted_vectors": deleted_vectors}
+        return {
+            "message": "文档删除成功",
+            "tenant_id": normalized_tenant_id,
+            "deleted_document_id": document_id,
+            "deleted_vectors": result["deleted_vectors"],
+            "deleted_wiki_pages": result["deleted_wiki_pages"],
+        }
     except HTTPException:
         raise
     except ValueError as e:
@@ -818,7 +1001,7 @@ async def reindex_document(
     tenant_id: Optional[str] = Query(None),
     async_reindex: bool = Query(True, description="是否异步重建索引"),
     session: AsyncSession = Depends(postgres_manager.get_session),
-    auth=Depends(get_auth_context),
+    auth=Depends(require_write_access),
 ):
     try:
         normalized_tenant_id = resolve_tenant_id(tenant_id, auth)
@@ -872,7 +1055,7 @@ async def retry_delete_document(
     document_id: int,
     tenant_id: Optional[str] = Query(None),
     session: AsyncSession = Depends(postgres_manager.get_session),
-    auth=Depends(get_auth_context),
+    auth=Depends(require_write_access),
 ):
     try:
         normalized_tenant_id = resolve_tenant_id(tenant_id, auth)
@@ -883,34 +1066,18 @@ async def retry_delete_document(
         if document.deletion_status != DELETION_STATUS_FAILED:
             raise HTTPException(status_code=409, detail="当前文档不处于可重试删除状态")
 
-        document.deletion_status = DELETION_STATUS_PENDING
-        document.deletion_error = None
-        await session.commit()
-        await session.refresh(document)
-
-        try:
-            deleted_vectors = await vector_store.delete_vectors_by_document_id(document_id, tenant_id=normalized_tenant_id)
-        except Exception as exc:
-            document.deletion_status = DELETION_STATUS_FAILED
-            document.deletion_error = str(exc)
-            await session.commit()
-            raise HTTPException(status_code=503, detail="删除文档向量失败，请稍后重试") from exc
-
-        try:
-            await session.delete(document)
-            await session.commit()
-        except Exception as exc:
-            document.deletion_status = DELETION_STATUS_FAILED
-            document.deletion_error = str(exc)
-            await session.commit()
-            raise HTTPException(status_code=503, detail="删除数据库记录失败，请稍后重试") from exc
-
+        result = await _delete_document_with_cleanup(
+            session,
+            tenant_id=normalized_tenant_id,
+            document=document,
+        )
         log_audit_event("document.retry_delete.completed", tenant_id=normalized_tenant_id, target_id=str(document_id))
         return {
             "message": "文档删除重试成功",
             "tenant_id": normalized_tenant_id,
             "deleted_document_id": document_id,
-            "deleted_vectors": deleted_vectors,
+            "deleted_vectors": result["deleted_vectors"],
+            "deleted_wiki_pages": result["deleted_wiki_pages"],
         }
     except HTTPException:
         raise

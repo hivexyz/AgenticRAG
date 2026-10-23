@@ -4,11 +4,75 @@
 """
 from pathlib import Path
 from typing import Dict, Any, Optional
+import zipfile
 from app.utils.logger import logger
 
 
 class DocumentParser:
     """文档解析器基类"""
+
+    SUPPORTED_EXTENSIONS = frozenset({
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".ppt",
+        ".pptx",
+        ".xls",
+        ".xlsx",
+        ".txt",
+        ".md",
+        ".markdown",
+    })
+
+    @classmethod
+    def supported_extensions(cls) -> frozenset[str]:
+        return cls.SUPPORTED_EXTENSIONS
+
+    @staticmethod
+    def validate_file_signature(file_path: str, original_file_name: Optional[str] = None) -> None:
+        """Validate that file bytes match the claimed extension."""
+        path = Path(original_file_name or file_path)
+        file_ext = path.suffix.lower()
+        with open(file_path, "rb") as handle:
+            head = handle.read(4096)
+
+        if file_ext == ".pdf":
+            if not head.startswith(b"%PDF-"):
+                raise ValueError("文件内容不是有效的 PDF")
+            return
+
+        if file_ext in {".doc", ".ppt", ".xls"}:
+            if not head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+                raise ValueError("文件内容不是旧版 Office 二进制格式")
+            return
+
+        if file_ext in {".docx", ".pptx", ".xlsx"}:
+            expected_root = {
+                ".docx": "word/",
+                ".pptx": "ppt/",
+                ".xlsx": "xl/",
+            }[file_ext]
+            if not head.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+                raise ValueError("文件内容不是有效的 Office OpenXML 压缩包")
+            try:
+                with zipfile.ZipFile(file_path) as archive:
+                    names = archive.namelist()
+            except zipfile.BadZipFile as exc:
+                raise ValueError("文件内容不是有效的 Office OpenXML 压缩包") from exc
+            if not any(name.startswith(expected_root) for name in names):
+                raise ValueError(f"文件内容与扩展名 {file_ext} 不匹配")
+            return
+
+        if file_ext in {".txt", ".md", ".markdown"}:
+            if b"\x00" in head:
+                raise ValueError("文本文件包含二进制内容")
+            try:
+                head.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError("文本文件必须使用 UTF-8 编码") from exc
+            return
+
+        raise ValueError(f"不支持的文件类型: {file_ext}")
     
     @staticmethod
     def parse(file_path: str) -> Dict[str, Any]:
@@ -115,7 +179,6 @@ class DocxParser:
             raise ImportError("请安装 python-docx: pip install python-docx")
         
         doc = Document(file_path)
-        content = []
         metadata = {}
         
         paragraphs = []

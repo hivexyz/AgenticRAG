@@ -31,6 +31,7 @@ export function DocumentUploadPanel({ tenantId, presets, vectorStorageLabel, onC
 
   const uploadProps: UploadProps = {
     maxCount: 1,
+    accept: '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.markdown',
     beforeUpload: () => false,
   };
 

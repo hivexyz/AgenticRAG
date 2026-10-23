@@ -5,6 +5,8 @@ LLM 模型管理
 from openai import AsyncOpenAI
 from typing import List, Dict, Any, Optional
 from app.config import settings
+from app.log_context import current_request_context
+from app.services.tenant_limits import tenant_limits
 from app.utils.logger import logger
 
 
@@ -37,6 +39,37 @@ class LLMManager:
     def disconnect(self):
         """关闭客户端引用。"""
         self.client = None
+
+    def _tenant_id_for_accounting(self) -> str:
+        return current_request_context().get("tenant_id") or settings.DEFAULT_TENANT_ID
+
+    def _estimate_text_tokens(self, text: str) -> int:
+        normalized = text or ""
+        if not normalized:
+            return 0
+        try:
+            import tiktoken
+
+            encoding = tiktoken.encoding_for_model(self.model)
+            return len(encoding.encode(normalized))
+        except Exception:
+            return max(1, len(normalized) // 4)
+
+    def _estimate_messages_tokens(self, messages: List[Dict[str, str]]) -> int:
+        total = 0
+        for message in messages or []:
+            total += self._estimate_text_tokens(str(message.get("role") or ""))
+            total += self._estimate_text_tokens(str(message.get("content") or ""))
+        return total
+
+    def _record_usage(self, usage: Optional[Dict[str, Any]], *, fallback_tokens: int = 0) -> None:
+        token_count = 0
+        if isinstance(usage, dict):
+            token_count = int(usage.get("total_tokens") or 0)
+        if token_count <= 0:
+            token_count = fallback_tokens
+        if token_count > 0:
+            tenant_limits.record_tokens(self._tenant_id_for_accounting(), token_count)
     
     async def chat_completion(
         self,
@@ -65,6 +98,10 @@ class LLMManager:
             raise RuntimeError("LLM 客户端未初始化")
         
         try:
+            reserved_tokens = 0
+            if stream:
+                reserved_tokens = self._estimate_messages_tokens(messages) + int(max_tokens if max_tokens is not None else self.max_tokens)
+                self._record_usage(None, fallback_tokens=reserved_tokens)
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -78,7 +115,7 @@ class LLMManager:
             if stream:
                 return {"stream": True, "response": response}
             else:
-                return {
+                payload = {
                     "id": response.id,
                     "object": response.object,
                     "created": response.created,
@@ -100,6 +137,8 @@ class LLMManager:
                         "total_tokens": response.usage.total_tokens,
                     },
                 }
+                self._record_usage(payload["usage"])
+                return payload
         except Exception as e:
             logger.error(f"LLM 聊天补全失败: {e}")
             raise
@@ -131,6 +170,10 @@ class LLMManager:
             raise RuntimeError("LLM 客户端未初始化")
         
         try:
+            reserved_tokens = 0
+            if stream:
+                reserved_tokens = self._estimate_text_tokens(prompt) + int(max_tokens if max_tokens is not None else self.max_tokens)
+                self._record_usage(None, fallback_tokens=reserved_tokens)
             response = await self.client.completions.create(
                 model=self.model,
                 prompt=prompt,
@@ -144,7 +187,7 @@ class LLMManager:
             if stream:
                 return {"stream": True, "response": response}
             else:
-                return {
+                payload = {
                     "id": response.id,
                     "object": response.object,
                     "created": response.created,
@@ -163,6 +206,8 @@ class LLMManager:
                         "total_tokens": response.usage.total_tokens,
                     },
                 }
+                self._record_usage(payload["usage"])
+                return payload
         except Exception as e:
             logger.error(f"LLM 文本补全失败: {e}")
             raise

@@ -111,15 +111,22 @@ def test_send_message_persists_user_and_assistant_messages(monkeypatch):
     app = create_app(session)
 
     async def fake_query(user_query, tenant_id='default', conversation_history=None, config=None):
+        assert config is None
         return {
             'query': user_query,
             'answer': '你好，我在。',
             'quality_score': 1.0,
+            'standalone_query': '你好',
+            'query_rewrites': ['你好'],
             'query_analysis': {'query_type': 'greeting'},
             'search_results': [],
             'reranked_results': [],
             'retrieval_count': 0,
             'context': None,
+            'citations': [{'claim': '问候来源'}],
+            'answer_blocks': [{'text': '你好，我在。', 'citation_ids': [], 'uncertainty_flag': False}],
+            'evidence_cards': [{'rank': 1, 'snippet': '问候'}],
+            'multi_hop_trace': [{'hop': 1, 'rendered_queries': ['你好']}],
             'messages': [],
             'error': None,
         }
@@ -137,6 +144,79 @@ def test_send_message_persists_user_and_assistant_messages(monkeypatch):
     assert data['feedback']['message_id'] == data['assistant_message']['id']
     assert len(data['feedback']['actions']) == 8
     assert len(session.added) == 2
+    assistant_metadata = data['assistant_message']['metadata']
+    assert assistant_metadata['citations'][0]['claim'] == '问候来源'
+    assert assistant_metadata['standalone_query'] == '你好'
+    assert assistant_metadata['query_rewrites'] == ['你好']
+    assert assistant_metadata['answer_blocks'][0]['text'] == '你好，我在。'
+    assert assistant_metadata['evidence_cards'][0]['snippet'] == '问候'
+    assert assistant_metadata['multi_hop_trace'][0]['hop'] == 1
+
+
+def test_stream_message_persists_final_assistant_metadata(monkeypatch):
+    existing = ConversationSession(tenant_id='acme', title='会话1', status='active')
+    existing.id = 1
+    existing.created_at = datetime.utcnow()
+    existing.updated_at = existing.created_at
+    session = FakeSession(existing=existing)
+    app = create_app(session)
+
+    async def fake_stream_query_response(user_query, tenant_id='default', conversation_history=None, config=None):
+        assert user_query == '请总结制度'
+        assert tenant_id == 'acme'
+        yield {'event': 'answer_delta', 'delta': '制度'}
+        yield {'event': 'answer_delta', 'delta': '要求'}
+        yield {
+            'event': 'answer_done',
+            'answer': '制度要求',
+            'answer_blocks': [{'text': '制度要求', 'citation_ids': [1], 'uncertainty_flag': False}],
+            'citations': [{'claim': '制度来源'}],
+            'evidence_cards': [{'rank': 1, 'snippet': '制度片段'}],
+            'multi_hop_trace': [{'hop': 1, 'rendered_queries': ['制度']}],
+        }
+        yield {
+            'event': 'quality_done',
+            'quality_score': 0.9,
+            'quality_evaluation': {'groundedness': 0.9, 'relevance': 0.92, 'quality_score': 0.91},
+        }
+        yield {
+            'event': 'final',
+            'result': {
+                'query': user_query,
+                'answer': '制度要求',
+                'quality_score': 0.91,
+                'quality_evaluation': {'groundedness': 0.9, 'relevance': 0.92, 'quality_score': 0.91},
+                'standalone_query': '请总结制度',
+                'query_rewrites': ['请总结制度'],
+                'query_analysis': {'query_type': 'summary'},
+                'search_results': [],
+                'reranked_results': [],
+                'retrieval_count': 1,
+                'context': '制度片段',
+                'citations': [{'claim': '制度来源'}],
+                'answer_blocks': [{'text': '制度要求', 'citation_ids': [1], 'uncertainty_flag': False}],
+                'evidence_cards': [{'rank': 1, 'snippet': '制度片段'}],
+                'multi_hop_trace': [{'hop': 1, 'rendered_queries': ['制度']}],
+                'messages': [],
+                'error': None,
+            },
+        }
+
+    monkeypatch.setattr(conversations_module.agentic_rag_manager, 'stream_query_response', fake_stream_query_response)
+
+    with TestClient(app) as client:
+        response = client.post('/conversations/1/messages/stream', json={'tenant_id': 'acme', 'content': '请总结制度'})
+
+    assert response.status_code == 200
+    assert 'event: answer_delta' in response.text
+    assert '"delta": "制度"' in response.text
+    assert 'event: final' in response.text
+    assert len(session.added) == 2
+    assistant = session.added[-1]
+    assert assistant.content == '制度要求'
+    assert assistant.message_metadata['quality_evaluation']['groundedness'] == 0.9
+    assert assistant.message_metadata['answer_blocks'][0]['citation_ids'] == [1]
+    assert assistant.message_metadata['multi_hop_trace'][0]['hop'] == 1
 
 
 def test_send_message_uses_trimmed_history(monkeypatch):

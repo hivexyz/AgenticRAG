@@ -43,6 +43,7 @@ def test_agentic_rag_query_uses_tenant_from_api_key(monkeypatch):
             'citations': [{'claim': '结论 1', 'sources': [{'title': '制度A'}]}],
             'evidence_cards': [{'snippet': '证据片段'}],
             'answer_blocks': [{'text': '根据制度A，可以这样处理。', 'citation_ids': [1], 'uncertainty_flag': False}],
+            'multi_hop_trace': [{'hop': 1, 'rendered_queries': ['制度A']}],
             'uncertainty': {'label': '资料充分'},
             'refusal': None,
             'messages': [],
@@ -56,6 +57,7 @@ def test_agentic_rag_query_uses_tenant_from_api_key(monkeypatch):
 
     assert response.status_code == 200
     assert captured['tenant_id'] == 'tenant_a'
+    assert response.json()['multi_hop_trace'][0]['hop'] == 1
 
 
 def test_agentic_rag_query_returns_citations_and_uncertainty(monkeypatch):

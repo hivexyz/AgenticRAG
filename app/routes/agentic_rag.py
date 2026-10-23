@@ -18,7 +18,7 @@ class AgenticRAGRequest(BaseModel):
     """AgenticRAG 请求模型"""
     query: str = Field(..., description="用户查询")
     conversation_history: Optional[List[Dict[str, str]]] = Field(None, description="对话历史")
-    max_retrievals: Optional[int] = Field(2, description="最大检索次数")
+    max_retrievals: Optional[int] = Field(None, description="最大检索次数；为空时使用系统默认配置")
     stream: bool = Field(False, description="是否流式输出")
 
 
@@ -27,11 +27,17 @@ class AgenticRAGResponse(BaseModel):
     query: str
     answer: Optional[str]
     quality_score: Optional[float]
+    quality_evaluation: Optional[Dict[str, Any]] = None
+    standalone_query: Optional[str] = None
+    query_rewrites: Optional[List[str]] = None
     query_analysis: Optional[Dict[str, Any]]
+    query_plan: Optional[Dict[str, Any]] = None
     search_results: Optional[List[Dict[str, Any]]]
     reranked_results: Optional[List[Dict[str, Any]]]
     retrieval_count: int
+    retrieval_attempts: Optional[List[Dict[str, Any]]] = None
     context: Optional[str]
+    multi_hop_trace: Optional[List[Dict[str, Any]]] = None
     citations: Optional[List[Dict[str, Any]]] = None
     evidence_cards: Optional[List[Dict[str, Any]]] = None
     answer_blocks: Optional[List[Dict[str, Any]]] = None

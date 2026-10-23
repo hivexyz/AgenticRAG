@@ -2,10 +2,22 @@
 Embedding 模型管理
 支持 OpenAI 兼容的 API
 """
+import hashlib
+
 from openai import AsyncOpenAI
 from typing import List, Dict, Any, Optional
 from app.config import settings
+from app.services.cache import TTLCache, cache_registry
 from app.utils.logger import logger
+
+
+embedding_cache = cache_registry.register(
+    TTLCache(
+        name="embedding",
+        max_size=settings.EMBEDDING_CACHE_MAX_SIZE,
+        ttl_seconds=settings.EMBEDDING_CACHE_TTL_SECONDS,
+    )
+)
 
 
 class EmbeddingManager:
@@ -33,6 +45,10 @@ class EmbeddingManager:
     def disconnect(self):
         """关闭客户端引用。"""
         self.client = None
+
+    def _cache_key(self, *, input_text: str, model: Optional[str], encoding_format: str) -> str:
+        digest = hashlib.sha256((input_text or "").encode("utf-8")).hexdigest()
+        return f"{model or self.model}:{encoding_format}:{digest}"
     
     async def create_embedding(
         self,
@@ -53,7 +69,13 @@ class EmbeddingManager:
         """
         if not self.client:
             raise RuntimeError("Embedding 客户端未初始化")
-        
+
+        cache_key = self._cache_key(input_text=input_text, model=model, encoding_format=encoding_format)
+        if settings.EMBEDDING_CACHE_ENABLED:
+            cached = embedding_cache.get(cache_key)
+            if cached is not None:
+                return list(cached)
+
         try:
             response = await self.client.embeddings.create(
                 model=model if model else self.model,
@@ -62,6 +84,8 @@ class EmbeddingManager:
             )
             
             embedding = response.data[0].embedding
+            if settings.EMBEDDING_CACHE_ENABLED:
+                embedding_cache.set(cache_key, list(embedding))
             logger.debug(f"成功创建嵌入向量，维度: {len(embedding)}")
             return embedding
         except Exception as e:
@@ -87,17 +111,45 @@ class EmbeddingManager:
         """
         if not self.client:
             raise RuntimeError("Embedding 客户端未初始化")
-        
+
+        if settings.EMBEDDING_CACHE_ENABLED:
+            embeddings: List[Optional[List[float]]] = []
+            missing_texts: List[str] = []
+            missing_indexes: List[int] = []
+            for index, text in enumerate(input_texts):
+                key = self._cache_key(input_text=text, model=model, encoding_format=encoding_format)
+                cached = embedding_cache.get(key)
+                if cached is None:
+                    embeddings.append(None)
+                    missing_texts.append(text)
+                    missing_indexes.append(index)
+                else:
+                    embeddings.append(list(cached))
+            if not missing_texts:
+                return [item or [] for item in embeddings]
+        else:
+            embeddings = []
+            missing_texts = input_texts
+            missing_indexes = list(range(len(input_texts)))
+
         try:
             response = await self.client.embeddings.create(
                 model=model if model else self.model,
-                input=input_texts,
+                input=missing_texts,
                 encoding_format=encoding_format,
             )
-            
-            embeddings = [item.embedding for item in response.data]
-            logger.debug(f"成功创建 {len(embeddings)} 个嵌入向量")
-            return embeddings
+
+            fresh_embeddings = [item.embedding for item in response.data]
+            if settings.EMBEDDING_CACHE_ENABLED:
+                for source_index, text, embedding in zip(missing_indexes, missing_texts, fresh_embeddings):
+                    embeddings[source_index] = list(embedding)
+                    key = self._cache_key(input_text=text, model=model, encoding_format=encoding_format)
+                    embedding_cache.set(key, list(embedding))
+                result = [item or [] for item in embeddings]
+            else:
+                result = fresh_embeddings
+            logger.debug(f"成功创建 {len(result)} 个嵌入向量")
+            return result
         except Exception as e:
             logger.error(f"批量创建嵌入向量失败: {e}")
             raise

@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 
 from app.db_models.document import Document
 from app.routes import documents as documents_module
+import app.auth as auth_module
+from app.services.tenant_limits import tenant_limits
 
 
 
@@ -134,6 +136,39 @@ def test_create_document_round_trips_metadata_as_object(app_factory):
     assert persisted['split_preset'] == 'smart'
 
 
+def test_create_document_deduplicates_by_content_hash(app_factory, monkeypatch):
+    existing = Document(title='已有文档', content='正文')
+    existing.id = 9
+    existing.tenant_id = 'acme'
+    existing.content_hash = documents_module._hash_text_content('正文')
+    existing.ingestion_status = 'ready'
+    existing.vector_status = 'ready'
+    existing.deletion_status = 'active'
+    existing.created_at = datetime.utcnow()
+    existing.updated_at = existing.created_at
+    session = FakeSession(documents=[existing])
+    app = app_factory(session)
+
+    def should_not_submit(*args, **kwargs):
+        raise AssertionError('duplicate document must not schedule ingest')
+
+    monkeypatch.setattr(documents_module.task_runner, 'submit', should_not_submit)
+
+    with TestClient(app) as client:
+        response = client.post('/documents/', json={
+            'tenant_id': 'acme',
+            'title': '重复文档',
+            'content': '正文',
+            'async_ingest': True,
+        })
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['id'] == 9
+    assert data['title'] == '已有文档'
+    assert len(session.added) == 0
+
+
 def test_upload_document_sanitizes_filename_persists_metadata_and_hides_temp_path(app_factory, monkeypatch):
     session = FakeSession()
     app = app_factory(session)
@@ -253,6 +288,68 @@ def test_upload_document_rejects_non_object_metadata(app_factory):
     assert response.json()['detail'] == 'metadata 必须是 JSON 对象'
 
 
+def test_upload_document_rejects_unsupported_extension(app_factory):
+    session = FakeSession()
+    app = app_factory(session)
+
+    with TestClient(app) as client:
+        response = client.post(
+            '/documents/upload',
+            files={'file': ('payload.exe', b'hello', 'application/octet-stream')},
+        )
+
+    assert response.status_code == 400
+    assert '不支持的文件类型' in response.json()['detail']
+    assert session.added == []
+
+
+def test_upload_document_rejects_signature_mismatch_and_removes_temp_file(app_factory, monkeypatch, tmp_path):
+    session = FakeSession()
+    app = app_factory(session)
+    temp_path = tmp_path / 'fake.pdf'
+
+    monkeypatch.setattr(
+        documents_module,
+        'build_temp_upload_path',
+        lambda _root, _name: (str(temp_path), 'upload-test'),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            '/documents/upload',
+            files={'file': ('fake.pdf', b'not a pdf', 'application/pdf')},
+        )
+
+    assert response.status_code == 400
+    assert '文件内容与扩展名不匹配' in response.json()['detail']
+    assert not temp_path.exists()
+    assert session.added == []
+
+
+def test_upload_document_rejects_oversized_file_and_removes_temp_file(app_factory, monkeypatch, tmp_path):
+    session = FakeSession()
+    app = app_factory(session)
+    temp_path = tmp_path / 'oversized.txt'
+
+    monkeypatch.setattr(documents_module.settings, 'MAX_UPLOAD_SIZE_MB', 1)
+    monkeypatch.setattr(
+        documents_module,
+        'build_temp_upload_path',
+        lambda _root, _name: (str(temp_path), 'upload-test'),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            '/documents/upload',
+            files={'file': ('large.txt', b'x' * (1024 * 1024 + 1), 'text/plain')},
+        )
+
+    assert response.status_code == 413
+    assert response.json()['detail'] == '文件大小超过限制，最大允许 1 MB'
+    assert not temp_path.exists()
+    assert session.added == []
+
+
 def test_list_documents_rejects_invalid_tenant_id(app_factory):
     session = FakeSession(documents=[])
     app = app_factory(session)
@@ -262,6 +359,44 @@ def test_list_documents_rejects_invalid_tenant_id(app_factory):
 
     assert response.status_code == 400
     assert response.json()['detail'] == 'tenant_id 格式无效，只能包含字母、数字、连字符或下划线'
+
+
+def test_read_only_api_key_can_list_but_cannot_create_document(app_factory):
+    existing = Document(title='只读文档', content='内容')
+    existing.id = 1
+    existing.tenant_id = 'tenant_a'
+    existing.created_at = datetime.utcnow()
+    existing.updated_at = existing.created_at
+    session = FakeSession(documents=[existing])
+    app = app_factory(session)
+    auth_module.api_key_auth.enabled = True
+    auth_module.api_key_auth._mapping = {'read-key': 'tenant_a'}
+    auth_module.api_key_auth._scopes = {'read-key': frozenset({'read'})}
+
+    with TestClient(app) as client:
+        list_response = client.get('/documents/', headers={'X-API-Key': 'read-key'})
+        create_response = client.post('/documents/', json={'title': '新文档', 'content': '正文'}, headers={'X-API-Key': 'read-key'})
+
+    assert list_response.status_code == 200
+    assert list_response.json()[0]['title'] == '只读文档'
+    assert create_response.status_code == 403
+    assert create_response.json()['detail'] == '当前 API Key 没有写权限'
+
+
+def test_token_quota_exhaustion_blocks_request(app_factory, monkeypatch):
+    session = FakeSession(documents=[])
+    app = app_factory(session)
+    auth_module.api_key_auth.enabled = True
+    auth_module.api_key_auth._mapping = {'valid-key': 'tenant_a'}
+    auth_module.api_key_auth._scopes = {'valid-key': frozenset({'read', 'write'})}
+    monkeypatch.setattr(documents_module.settings, 'TENANT_TOKEN_QUOTA_PER_DAY', 5)
+    tenant_limits.record_tokens('tenant_a', 5)
+
+    with TestClient(app) as client:
+        response = client.get('/documents/', headers={'X-API-Key': 'valid-key'})
+
+    assert response.status_code == 429
+    assert 'token 配额已用尽' in response.json()['detail']
 
 
 def test_delete_document_also_cleans_vectors(app_factory, monkeypatch):
@@ -290,6 +425,36 @@ def test_delete_document_also_cleans_vectors(app_factory, monkeypatch):
     assert response.json()['deleted_vectors'] == 4
     assert called['document_id'] == 7
     assert called['tenant_id'] == 'acme'
+    assert session.deleted == [existing]
+
+
+def test_delete_document_soft_deletes_linked_wiki_before_db_delete(app_factory, monkeypatch):
+    existing = Document(title='文档', content='内容')
+    existing.id = 7
+    existing.tenant_id = 'acme'
+    existing.deletion_status = 'active'
+    existing.created_at = datetime.utcnow()
+    existing.updated_at = existing.created_at
+    session = FakeSession(existing_document=existing)
+    app = app_factory(session)
+    marked = {}
+
+    async def fake_delete_vectors_async(document_id: int, tenant_id: str | None = None) -> int:
+        return 4
+
+    async def fake_mark_deleted(session, tenant_id, document_id):
+        marked['tenant_id'] = tenant_id
+        marked['document_id'] = document_id
+        return [99]
+
+    monkeypatch.setattr(documents_module.vector_store, 'delete_vectors_by_document_id', fake_delete_vectors_async)
+    monkeypatch.setattr(documents_module, 'mark_wiki_pages_deleted_for_document', fake_mark_deleted)
+
+    with TestClient(app) as client:
+        response = client.delete('/documents/7', params={'tenant_id': 'acme'})
+
+    assert response.status_code == 200
+    assert marked == {'tenant_id': 'acme', 'document_id': 7}
     assert session.deleted == [existing]
 
 
@@ -882,9 +1047,11 @@ def test_create_document_uses_split_preset_and_knowledge_base(app_factory, monke
     assert session.added[0].split_method == 'paragraph'
 
 
-def test_bulk_delete_documents_accepts_multiple_ids(app_factory):
+def test_bulk_delete_documents_executes_cleanup_for_multiple_ids(app_factory, monkeypatch):
     session = FakeSession()
     app = app_factory(session)
+    deleted_vectors = []
+    deleted_wiki = []
 
     async def fake_execute(_statement):
         class _Result:
@@ -904,8 +1071,26 @@ def test_bulk_delete_documents_accepts_multiple_ids(app_factory):
 
     session.execute = fake_execute
 
+    async def fake_delete_vectors_async(document_id: int, tenant_id: str | None = None) -> int:
+        deleted_vectors.append((document_id, tenant_id))
+        return 2
+
+    async def fake_mark_deleted(session, tenant_id, document_id):
+        deleted_wiki.append((document_id, tenant_id))
+        return [90 + document_id]
+
+    monkeypatch.setattr(documents_module.vector_store, 'delete_vectors_by_document_id', fake_delete_vectors_async)
+    monkeypatch.setattr(documents_module, 'mark_wiki_pages_deleted_for_document', fake_mark_deleted)
+
     with TestClient(app) as client:
         response = client.post('/documents/bulk-delete', json={'tenant_id': 'acme', 'document_ids': [1, 2]})
 
     assert response.status_code == 200
-    assert response.json()['accepted'] == [1]
+    data = response.json()
+    assert data['accepted'] == [1]
+    assert data['deleted'] == [1]
+    assert data['results'][0]['deleted_vectors'] == 2
+    assert data['results'][0]['deleted_wiki_pages'] == [91]
+    assert data['failures'][0]['document_id'] == 2
+    assert deleted_vectors == [(1, 'acme')]
+    assert deleted_wiki == [(1, 'acme')]

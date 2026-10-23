@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from app.database.vector_store import vector_store
 from app.models import embedding_manager, llm_manager, reranker_manager
 from app.utils.logger import logger
-from app.auth import get_tenant_id
+from app.auth import get_auth_context, get_tenant_id
 from app.utils.tenancy import require_tenant_id
 
 router = APIRouter()
@@ -73,7 +73,7 @@ class SearchWithRerankRequest(BaseModel):
 
 
 @router.post("/llm/chat")
-async def chat_completion(request: ChatCompletionRequest):
+async def chat_completion(request: ChatCompletionRequest, _auth=Depends(get_auth_context)):
     """
     LLM 聊天补全
     """
@@ -95,7 +95,7 @@ async def chat_completion(request: ChatCompletionRequest):
 
 
 @router.post("/llm/completion")
-async def completion(request: CompletionRequest):
+async def completion(request: CompletionRequest, _auth=Depends(get_auth_context)):
     """
     LLM 文本补全
     """
@@ -116,7 +116,7 @@ async def completion(request: CompletionRequest):
 
 
 @router.post("/llm/tokens")
-async def count_tokens(text: str):
+async def count_tokens(text: str, _auth=Depends(get_auth_context)):
     """
     计算 token 数量
     """
@@ -129,7 +129,7 @@ async def count_tokens(text: str):
 
 
 @router.post("/embedding")
-async def create_embedding(request: EmbeddingRequest):
+async def create_embedding(request: EmbeddingRequest, _auth=Depends(get_auth_context)):
     """
     创建文本嵌入向量
     """
@@ -150,7 +150,7 @@ async def create_embedding(request: EmbeddingRequest):
 
 
 @router.post("/embedding/batch")
-async def create_embeddings(request: EmbeddingBatchRequest):
+async def create_embeddings(request: EmbeddingBatchRequest, _auth=Depends(get_auth_context)):
     """
     批量创建文本嵌入向量
     """
@@ -172,7 +172,7 @@ async def create_embeddings(request: EmbeddingBatchRequest):
 
 
 @router.post("/rerank")
-async def rerank(request: RerankRequest):
+async def rerank(request: RerankRequest, _auth=Depends(get_auth_context)):
     """
     对文档进行重排序
     """
@@ -194,7 +194,7 @@ async def rerank(request: RerankRequest):
 
 
 @router.post("/rerank/embeddings")
-async def rerank_with_embeddings(request: RerankWithEmbeddingsRequest):
+async def rerank_with_embeddings(request: RerankWithEmbeddingsRequest, _auth=Depends(get_auth_context)):
     """
     使用嵌入向量进行重排序
     """

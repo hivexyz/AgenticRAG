@@ -1,0 +1,51 @@
+{"id":"leave_scope","question":"请假制度适用范围是什么？","must_hit_chunk_ids":[101],"reference_answer":"请假制度适用于正式员工和实习生。","must_mention":["正式员工","实习生"],"expected_refusal":false}
+{"id":"travel_invoice","question":"差旅报销需要哪些票据？","must_hit_chunk_ids":[201],"reference_answer":"差旅报销需要发票、行程单和审批记录。","must_mention":["发票","行程单"],"expected_refusal":false}
+{"id":"unknown_policy","question":"不存在的火星出差制度是什么？","must_hit_chunk_ids":[],"reference_answer":"知识库没有足够信息。","must_mention":[],"expected_refusal":true}
+{"id":"expense_deadline","question":"费用报销最晚什么时候提交？","must_hit_chunk_ids":[301],"reference_answer":"费用报销应在费用发生后 30 天内提交。","must_mention":["30 天","提交"],"expected_refusal":false}
+{"id":"approval_threshold","question":"超过多少金额需要部门负责人审批？","must_hit_chunk_ids":[401],"reference_answer":"单笔超过 5000 元的采购或费用需要部门负责人审批。","must_mention":["5000 元","部门负责人"],"expected_refusal":false}
+{"id":"security_training","question":"新员工入职安全培训有哪些要求？","must_hit_chunk_ids":[501],"reference_answer":"新员工需在入职 7 天内完成信息安全培训并通过测验。","must_mention":["7 天内","信息安全培训"],"expected_refusal":false}
+{"id":"remote_work_scope","question":"远程办公适用于哪些岗位？","must_hit_chunk_ids":[601],"reference_answer":"远程办公适用于研发、设计等可远程交付岗位，涉密岗位需单独审批。","must_mention":["可远程交付岗位","涉密岗位"],"expected_refusal":false}
+{"id":"contract_archive","question":"合同归档需要保留哪些材料？","must_hit_chunk_ids":[701],"reference_answer":"合同归档需保留定稿合同、审批记录、盖章扫描件和补充协议。","must_mention":["定稿合同","审批记录","盖章扫描件"],"expected_refusal":false}
+{"id":"wiki_multi_hop_reference","question":"差旅办法引用的住宿标准文件叫什么？","must_hit_chunk_ids":[801],"reference_answer":"差旅办法引用的住宿标准文件是《员工差旅住宿标准》。","must_mention":["员工差旅住宿标准"],"expected_refusal":false}
+{"id":"unknown_bonus_policy","question":"银河项目奖金制度怎么发放？","must_hit_chunk_ids":[],"reference_answer":"知识库没有足够信息。","must_mention":[],"expected_refusal":true}
+{"id":"onboarding_materials","question":"新员工入职需要提交哪些材料？","must_hit_chunk_ids":[901],"reference_answer":"新员工入职需提交身份证明、学历证明、银行卡信息和紧急联系人。","must_mention":["身份证明","学历证明","银行卡"],"expected_refusal":false}
+{"id":"probation_review","question":"试用期转正评估由谁发起？","must_hit_chunk_ids":[1001],"reference_answer":"试用期转正评估由直属主管发起，人力资源部门复核。","must_mention":["直属主管","人力资源"],"expected_refusal":false}
+{"id":"data_retention","question":"客户数据默认保留多久？","must_hit_chunk_ids":[1101],"reference_answer":"客户数据默认保留 3 年，到期后需归档或删除。","must_mention":["3 年","归档或删除"],"expected_refusal":false}
+{"id":"vpn_access","question":"VPN 权限申请需要谁审批？","must_hit_chunk_ids":[1201],"reference_answer":"VPN 权限申请需由部门负责人和信息安全负责人审批。","must_mention":["部门负责人","信息安全负责人"],"expected_refusal":false}
+{"id":"device_return","question":"离职时办公设备怎么处理？","must_hit_chunk_ids":[1301],"reference_answer":"离职员工需在最后工作日前归还办公电脑、门禁卡和其他公司资产。","must_mention":["最后工作日","办公电脑","门禁卡"],"expected_refusal":false}
+{"id":"meeting_room","question":"会议室预订取消有什么要求？","must_hit_chunk_ids":[1401],"reference_answer":"会议室预订无法使用时应至少提前 30 分钟取消。","must_mention":["30 分钟","取消"],"expected_refusal":false}
+{"id":"overtime_meal","question":"加班餐补的报销条件是什么？","must_hit_chunk_ids":[1501],"reference_answer":"加班餐补需在工作日晚 20 点后或休息日连续工作 4 小时以上产生。","must_mention":["20 点后","4 小时"],"expected_refusal":false}
+{"id":"asset_purchase","question":"固定资产采购需要走什么流程？","must_hit_chunk_ids":[1601],"reference_answer":"固定资产采购需先提交采购申请，经预算确认和资产管理员登记后执行。","must_mention":["采购申请","预算确认","资产管理员"],"expected_refusal":false}
+{"id":"vendor_onboarding","question":"供应商准入需要哪些审核？","must_hit_chunk_ids":[1701],"reference_answer":"供应商准入需完成资质审核、合规筛查和合同评审。","must_mention":["资质审核","合规筛查","合同评审"],"expected_refusal":false}
+{"id":"privacy_training","question":"隐私培训多久需要复训一次？","must_hit_chunk_ids":[1801],"reference_answer":"隐私培训需每年复训一次，关键岗位还需参加专项培训。","must_mention":["每年","专项培训"],"expected_refusal":false}
+{"id":"incident_report","question":"安全事件发现后多久内上报？","must_hit_chunk_ids":[1901],"reference_answer":"安全事件发现后应在 1 小时内上报信息安全团队。","must_mention":["1 小时内","信息安全团队"],"expected_refusal":false}
+{"id":"leave_sick_docs","question":"病假需要提交什么证明？","must_hit_chunk_ids":[2001],"reference_answer":"病假需提交医疗机构出具的诊断证明或病假单。","must_mention":["诊断证明","病假单"],"expected_refusal":false}
+{"id":"annual_leave_carryover","question":"年假未休完可以结转多久？","must_hit_chunk_ids":[2101],"reference_answer":"未休年假可结转至次年 3 月 31 日，逾期未休视为放弃。","must_mention":["次年 3 月 31 日","逾期"],"expected_refusal":false}
+{"id":"travel_hotel_limit","question":"一线城市住宿标准上限是多少？","must_hit_chunk_ids":[2201],"reference_answer":"一线城市住宿标准上限为每晚 600 元。","must_mention":["600 元","每晚"],"expected_refusal":false}
+{"id":"travel_approval_flow","question":"出差申请需要在哪个节点提交？","must_hit_chunk_ids":[2301],"reference_answer":"出差申请应在出行前通过 OA 流程提交并获得主管审批。","must_mention":["出行前","OA 流程","主管审批"],"expected_refusal":false}
+{"id":"remote_work_days","question":"远程办公每月最多几天？","must_hit_chunk_ids":[2401],"reference_answer":"远程办公原则上每月最多 4 天，特殊情况需额外审批。","must_mention":["4 天","额外审批"],"expected_refusal":false}
+{"id":"security_password","question":"系统密码多久必须更换？","must_hit_chunk_ids":[2501],"reference_answer":"系统密码至少每 90 天更换一次，并不得重复使用最近 5 次密码。","must_mention":["90 天","最近 5 次"],"expected_refusal":false}
+{"id":"code_review_policy","question":"代码合入主干前必须做什么？","must_hit_chunk_ids":[2601],"reference_answer":"代码合入主干前必须完成至少一名同事的代码评审并通过自动化检查。","must_mention":["代码评审","自动化检查"],"expected_refusal":false}
+{"id":"release_freeze","question":"发布冻结期可以上线吗？","must_hit_chunk_ids":[2701],"reference_answer":"发布冻结期原则上不得上线，紧急修复需获得发布负责人批准。","must_mention":["不得上线","发布负责人"],"expected_refusal":false}
+{"id":"customer_data_export","question":"客户数据导出需要记录什么？","must_hit_chunk_ids":[2801],"reference_answer":"客户数据导出需记录导出人、审批人、用途、范围和保存期限。","must_mention":["导出人","审批人","保存期限"],"expected_refusal":false}
+{"id":"financial_invoice_title","question":"报销发票抬头应该怎么写？","must_hit_chunk_ids":[2901],"reference_answer":"报销发票抬头应使用公司全称，并填写统一社会信用代码。","must_mention":["公司全称","统一社会信用代码"],"expected_refusal":false}
+{"id":"contract_review_owner","question":"合同法务评审由谁负责？","must_hit_chunk_ids":[3001],"reference_answer":"合同法务评审由法务团队负责，业务负责人需提供交易背景。","must_mention":["法务团队","业务负责人"],"expected_refusal":false}
+{"id":"stamp_request","question":"用章申请需要上传哪些附件？","must_hit_chunk_ids":[3101],"reference_answer":"用章申请需上传已审批合同、用章说明和业务负责人确认记录。","must_mention":["已审批合同","用章说明","业务负责人"],"expected_refusal":false}
+{"id":"visitor_registration","question":"访客入场需要提前多久登记？","must_hit_chunk_ids":[3201],"reference_answer":"访客入场需至少提前 1 个工作日在访客系统登记。","must_mention":["1 个工作日","访客系统"],"expected_refusal":false}
+{"id":"access_card","question":"门禁卡遗失后应该怎么处理？","must_hit_chunk_ids":[3301],"reference_answer":"门禁卡遗失后应立即在行政系统挂失，并向行政前台申请补办。","must_mention":["挂失","补办"],"expected_refusal":false}
+{"id":"missing_invoice","question":"发票丢失还能报销吗？","must_hit_chunk_ids":[3401],"reference_answer":"发票丢失需提供情况说明、支付凭证和部门负责人确认后再申请报销。","must_mention":["情况说明","支付凭证","部门负责人"],"expected_refusal":false}
+{"id":"data_classification","question":"内部数据分为哪几级？","must_hit_chunk_ids":[3501],"reference_answer":"内部数据分为公开、内部、敏感和高度敏感四级。","must_mention":["公开","内部","敏感","高度敏感"],"expected_refusal":false}
+{"id":"wiki_policy_owner","question":"Wiki 页面人工校订后谁负责复核？","must_hit_chunk_ids":[3601],"reference_answer":"Wiki 页面人工校订后由知识库管理员复核，必要时邀请业务负责人确认。","must_mention":["知识库管理员","业务负责人"],"expected_refusal":false}
+{"id":"multi_hop_budget_owner","question":"项目预算负责人所在部门的审批要求是什么？","must_hit_chunk_ids":[3701],"reference_answer":"项目预算负责人所在部门审批需同时满足预算负责人确认和部门负责人复核。","must_mention":["预算负责人确认","部门负责人复核"],"expected_refusal":false}
+{"id":"policy_exception","question":"制度例外申请需要哪些信息？","must_hit_chunk_ids":[3801],"reference_answer":"制度例外申请需说明例外原因、影响范围、风险控制措施和有效期。","must_mention":["例外原因","影响范围","风险控制措施"],"expected_refusal":false}
+{"id":"training_record","question":"培训记录需要保存哪些字段？","must_hit_chunk_ids":[3901],"reference_answer":"培训记录需保存培训主题、讲师、参加人员、完成时间和考核结果。","must_mention":["培训主题","参加人员","考核结果"],"expected_refusal":false}
+{"id":"archive_period","question":"合同档案至少保存多久？","must_hit_chunk_ids":[4001],"reference_answer":"合同档案至少保存 10 年，法律另有要求的按更长期限执行。","must_mention":["10 年","更长期限"],"expected_refusal":false}
+{"id":"procurement_quote","question":"采购比价需要几家供应商报价？","must_hit_chunk_ids":[4101],"reference_answer":"采购比价原则上需要至少 3 家供应商报价。","must_mention":["至少 3 家","供应商报价"],"expected_refusal":false}
+{"id":"emergency_contact","question":"员工紧急联系人信息多久更新一次？","must_hit_chunk_ids":[4201],"reference_answer":"员工紧急联系人信息应每年确认一次，发生变化时需及时更新。","must_mention":["每年","及时更新"],"expected_refusal":false}
+{"id":"dev_secret_storage","question":"研发密钥应该存放在哪里？","must_hit_chunk_ids":[4301],"reference_answer":"研发密钥应存放在公司批准的密钥管理系统，不得写入代码仓库。","must_mention":["密钥管理系统","不得写入代码仓库"],"expected_refusal":false}
+{"id":"office_noise","question":"办公区噪音投诉如何处理？","must_hit_chunk_ids":[4401],"reference_answer":"办公区噪音投诉由行政团队受理，并在 2 个工作日内反馈处理结果。","must_mention":["行政团队","2 个工作日"],"expected_refusal":false}
+{"id":"unknown_space_policy","question":"火星基地远程打卡政策是什么？","must_hit_chunk_ids":[],"reference_answer":"知识库没有足够信息。","must_mention":[],"expected_refusal":true}
+{"id":"unknown_ai_bonus","question":"AI 超额贡献奖金怎么计算？","must_hit_chunk_ids":[],"reference_answer":"知识库没有足够信息。","must_mention":[],"expected_refusal":true}
+{"id":"unknown_merger_plan","question":"明年并购保密计划的审批链是什么？","must_hit_chunk_ids":[],"reference_answer":"知识库没有足够信息。","must_mention":[],"expected_refusal":true}
+{"id":"unknown_private_salary","question":"某员工个人薪资调整记录是多少？","must_hit_chunk_ids":[],"reference_answer":"知识库没有足够信息。","must_mention":[],"expected_refusal":true}
+{"id":"unknown_future_policy","question":"2028 年尚未发布的休假政策是什么？","must_hit_chunk_ids":[],"reference_answer":"知识库没有足够信息。","must_mention":[],"expected_refusal":true}

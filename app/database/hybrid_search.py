@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.database.postgres import async_session_maker
 from app.db_models import DocumentChunk
 from app.utils.logger import logger
+from app.utils.retrieval_filters import build_sparse_filter_sql, filter_retrieval_hits
 from app.utils.tenancy import validate_tenant_id
 
 
@@ -72,7 +73,7 @@ def reciprocal_rank_fusion(
 
 
 def _query_terms(query: str) -> List[str]:
-    """抽取用于 LIKE 稀疏检索的关键词。"""
+    """抽取用于稀疏检索的关键词。"""
     tokens = re.findall(r"[A-Za-z0-9_\u4e00-\u9fff]{2,}", query or "")
     seen = set()
     terms = []
@@ -85,32 +86,57 @@ def _query_terms(query: str) -> List[str]:
     return terms[:8]
 
 
+def _fts_query(terms: List[str]) -> str:
+    """Build a conservative plain tsquery string while preserving Chinese terms."""
+    return " ".join(terms)
+
+
 async def sparse_search_chunks(
     query: str,
     *,
     tenant_id: Optional[str] = None,
     top_k: int = 10,
+    filters: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """基于 document_chunks 的轻量稀疏检索。优先使用 pg_trgm similarity，失败时退化为 ILIKE。"""
+    """基于 document_chunks 的稀疏检索。
+
+    优先使用 PostgreSQL FTS (`to_tsvector`/`plainto_tsquery`) 计算全文排名，
+    同时保留 ILIKE/trigram 信号作为中文短语和精确词兜底；数据库不支持时退化为 ORM ILIKE。
+    """
     normalized_tenant_id = validate_tenant_id(tenant_id)
     terms = _query_terms(query)
     if not terms:
         return []
 
     like_clauses = []
-    params: Dict[str, Any] = {"tenant_id": normalized_tenant_id, "query": query, "limit": top_k}
+    params: Dict[str, Any] = {
+        "tenant_id": normalized_tenant_id,
+        "query": query,
+        "fts_query": _fts_query(terms),
+        "limit": top_k,
+    }
     for index, term in enumerate(terms):
         key = f"term_{index}"
         like_clauses.append(f"dc.content ILIKE :{key}")
         params[key] = f"%{term}%"
 
     where_like = " OR ".join(like_clauses)
+    filter_clauses, filter_params = build_sparse_filter_sql(filters)
+    params.update(filter_params)
+    filter_sql = ""
+    if filter_clauses:
+        filter_sql = " AND " + " AND ".join(f"({clause})" for clause in filter_clauses)
+    tsvector_expr = "to_tsvector('simple', coalesce(dc.content, ''))"
+    tsquery_expr = "plainto_tsquery('simple', :fts_query)"
     sql = text(
         "SELECT dc.id, dc.document_id, dc.chunk_index, dc.content, dc.page_number, "
         "dc.section_title, dc.chunk_metadata, d.title AS document_title, d.file_type, "
-        "similarity(dc.content, :query) AS sparse_score "
+        f"(({tsvector_expr} @@ {tsquery_expr})::int * 0.5 + "
+        f"ts_rank_cd({tsvector_expr}, {tsquery_expr}) * 10.0 + "
+        "similarity(dc.content, :query)) AS sparse_score "
         "FROM document_chunks dc JOIN documents d ON d.id = dc.document_id "
-        "WHERE dc.tenant_id = :tenant_id AND (" + where_like + ") "
+        f"WHERE dc.tenant_id = :tenant_id AND (({tsvector_expr} @@ {tsquery_expr}) OR " + where_like + ") "
+        f"{filter_sql} "
         "ORDER BY sparse_score DESC, dc.id ASC LIMIT :limit"
     )
 
@@ -126,10 +152,17 @@ async def sparse_search_chunks(
                 .where(text(" OR ".join([f"content ILIKE :{k}" for k in params if k.startswith('term_')])))
                 .limit(top_k)
             )
-            fallback_params = {k: v for k, v in params.items() if k.startswith("term_")}
+            fallback_params = {
+                k: v
+                for k, v in params.items()
+                if k.startswith("term_")
+            }
             fallback = await session.execute(statement, fallback_params)
             chunks = fallback.scalars().all()
-            return [chunk.to_retrieval_dict() | {"sparse_score": 0.0} for chunk in chunks]
+            return filter_retrieval_hits(
+                [chunk.to_retrieval_dict() | {"sparse_score": 0.0} for chunk in chunks],
+                filters,
+            )
 
         rows = result.mappings().all()
 
@@ -152,7 +185,7 @@ async def sparse_search_chunks(
                 "sparse_score": float(row["sparse_score"] or 0.0),
             }
         )
-    return hits
+    return filter_retrieval_hits(hits, filters)
 
 
 async def hydrate_vector_hits(hits: Iterable[Dict[str, Any]], *, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -183,5 +216,7 @@ async def hydrate_vector_hits(hits: Iterable[Dict[str, Any]], *, tenant_id: Opti
         merged = chunk.to_retrieval_dict()
         merged.update({k: v for k, v in item.items() if k not in {"metadata"}})
         merged["metadata"] = {**(merged.get("metadata") or {}), **metadata}
+        if "knowledge_base" in merged["metadata"]:
+            merged["knowledge_base"] = merged["metadata"]["knowledge_base"]
         hydrated.append(merged)
     return hydrated
